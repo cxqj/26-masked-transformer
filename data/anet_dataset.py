@@ -16,15 +16,64 @@ import pickle
 from random import shuffle
 
 import torch
-import torchtext
+import torchtext  # 文本处理库
 from torch.utils.data import Dataset
 
+"""
+Compute the temporal intersection over union between a
+target segment and all the test segments.
+"""
 from data.utils import segment_iou
 
+"""
+Field 包含一写文本处理的通用参数的设置，同时还包含一个词典对象，可以把文本数据表示成数字类型，进而可以把文本表示成需要的tensor类型
+
+以下是Field对象包含的参数：
+
+sequential: 是否把数据表示成序列，如果是False, 不能使用分词 默认值: True.
+
+use_vocab: 是否使用词典对象. 如果是False 数据的类型必须已经是数值类型. 默认值: True.
+
+init_token: 每一条数据的起始字符 默认值: None.
+
+eos_token: 每条数据的结尾字符 默认值: None.
+
+fix_length: 修改每条数据的长度为该值，不够的用pad_token补全. 默认值: None.
+
+tensor_type: 把数据转换成的tensor类型 默认值: torch.LongTensor.
+
+preprocessing:在分词之后和数值化之前使用的管道 默认值: None.
+
+postprocessing: 数值化之后和转化成tensor之前使用的管道默认值: None.
+
+lower: 是否把数据转化为小写 默认值: False.
+
+tokenize: 分词函数. 默认值: str.split.
+
+include_lengths: 是否返回一个已经补全的最小batch的元组和和一个包含每条数据长度的列表 . 默认值: False.
+
+batch_first: Whether to produce tensors with the batch dimension first. 默认值: False.
+
+pad_token: 用于补全的字符. 默认值: "<pad>".
+
+unk_token: 不存在词典里的字符. 默认值: "<unk>".
+
+pad_first: 是否补全第一个字符. 默认值: False.
+
+重要的几个方法：
+
+pad(minibatch): 在一个batch对齐每条数据
+
+build_vocab(): 建立词典
+
+numericalize(): 把文本数据数值化，返回tensor
+
+"""
 def get_vocab_and_sentences(dataset_file, max_length=20):
     # build vocab and tokenized sentences
+    
     text_proc = torchtext.data.Field(sequential=True, init_token='<init>',
-                                eos_token='<eos>', tokenize='spacy',
+                                eos_token='<eos>', tokenize='spacy', # 分词函数
                                 lower=True, batch_first=True,
                                 fix_length=max_length)
     train_sentences = []
@@ -53,24 +102,34 @@ def get_vocab_and_sentences(dataset_file, max_length=20):
 
     # sentences_proc = list(map(text_proc.preprocess, train_sentences)) # build vocab on train only
     sentences_proc = list(map(text_proc.preprocess, train_val_sentences)) # build vocab on train and val
-    text_proc.build_vocab(sentences_proc, min_freq=5)
+    text_proc.build_vocab(sentences_proc, min_freq=5)  # 统计单词，出现次数大于5的保留
     print('# of words in the vocab: {}'.format(len(text_proc.vocab)))
     print(
         '# of sentences in training: {}, # of sentences in validation: {}'.format(
             nsentence['training'], nsentence['validation']
         ))
     print('# of training videos: {}'.format(ntrain_videos))
-    return text_proc, data
+    return text_proc, data  
 
 # dataloader for training
 class ANetDataset(Dataset):
-    def __init__(self, image_path, split, slide_window_size,
+    """
+    image_path : feature_root
+    slide_window_size : 480
+    dur_file : 视频对应的持续时间
+    kernel_list : 卷积核列表
+    text_proc : 预处理过的语句对象
+    raw_data : 原始数据
+    pos_thresh : 0.7
+    neg_thresh:0.3
+    """
+    def __init__(self, image_path, split, slide_window_size, 
                  dur_file, kernel_list, text_proc, raw_data,
                  pos_thresh, neg_thresh, stride_factor, dataset, save_samplelist=False,
                  load_samplelist=False, sample_listpath=None):
         super(ANetDataset, self).__init__()
 
-        split_paths = []
+        split_paths = []  #  特征文件路径
         for split_dev in split:
             split_paths.append(os.path.join(image_path, split_dev))
         self.slide_window_size = slide_window_size
@@ -82,13 +141,13 @@ class ANetDataset(Dataset):
             for vid, val in raw_data.items():
                 annotations = val['annotations']
                 for split_path in split_paths:
-                    if val['subset'] in split and os.path.isfile(os.path.join(split_path, vid + '_bn.npy')):
+                    if val['subset'] in split and os.path.isfile(os.path.join(split_path, vid + '_bn.npy')):  # 光流特征
                         for ind, ann in enumerate(annotations):
                             ann['sentence'] = ann['sentence'].strip()
                             train_sentences.append(ann['sentence'])
 
-            train_sentences = list(map(text_proc.preprocess, train_sentences))
-            sentence_idx = text_proc.numericalize(text_proc.pad(train_sentences),
+            train_sentences = list(map(text_proc.preprocess, train_sentences))  # 词嵌入
+            sentence_idx = text_proc.numericalize(text_proc.pad(train_sentences),  # numericalize(): 把文本数据数值化，返回tensor，-1表示使用cpu
                                                        device=-1)  # put in memory
             if sentence_idx.size(0) != len(train_sentences):
                 raise Exception("Error in numericalize sentences")
@@ -98,20 +157,21 @@ class ANetDataset(Dataset):
                 for split_path in split_paths:
                     if val['subset'] in split and os.path.isfile(os.path.join(split_path, vid + '_bn.npy')):
                         for ann in val['annotations']:
-                            ann['sentence_idx'] = sentence_idx[idx]
+                            ann['sentence_idx'] = sentence_idx[idx]  # 加入数值化的语句
                             idx += 1
 
             print('size of the sentence block variable ({}): {}'.format(
                 split, sentence_idx.size()))
 
             # all the anchors
+            # 预设anchor
             anc_len_lst = []
             anc_cen_lst = []
             for i in range(0, len(kernel_list)):
                 kernel_len = kernel_list[i]
                 anc_cen = np.arange(float((kernel_len) / 2.), float(
                     slide_window_size + 1 - (kernel_len) / 2.), math.ceil(kernel_len/stride_factor))
-                anc_len = np.full(anc_cen.shape, kernel_len)
+                anc_len = np.full(anc_cen.shape, kernel_len)  # np.full 构造一个数组，用指定值填充其元素
                 anc_len_lst.append(anc_len)
                 anc_cen_lst.append(anc_cen)
             anc_len_all = np.hstack(anc_len_lst)
@@ -143,6 +203,11 @@ class ANetDataset(Dataset):
                     annotations = val['annotations']
                     for split_path in split_paths:
                         if val['subset'] in split and os.path.isfile(os.path.join(split_path, vid + '_bn.npy')):
+                            """
+                            apply方法是阻塞的。等待当前子进程执行完毕后，在执行下一个进程。
+                            apply_async 是异步非阻塞的。不用等待当前进程执行完毕，随时根据系统调度来进行进程切换。
+                            
+                            """
                             results[vid_idx] = pool.apply_async(_get_pos_neg,
                                          (split_path, annotations, vid,
                                           slide_window_size, frame_to_second[vid], anc_len_all,
@@ -204,6 +269,10 @@ class ANetDataset(Dataset):
         return (pos_seg, sentence, neg_seg, img_feat)
 
 
+"""
+randomly sample U = 10
+anchors from positive and negative anchor pools that correspond to one ground-truth segment for each mini-batch.
+"""
 def _get_pos_neg(split_path, annotations, vid,
                  slide_window_size, sampling_sec, anc_len_all,
                  anc_cen_all, pos_thresh, neg_thresh):
@@ -215,22 +284,24 @@ def _get_pos_neg(split_path, annotations, vid,
         # load feature
         # T x H
         resnet_feat = torch.from_numpy(
-            np.load(video_prefix + '_resnet.npy')).float()
+            np.load(video_prefix + '_resnet.npy')).float()  # apperance
         bn_feat = torch.from_numpy(
-            np.load(video_prefix + '_bn.npy')).float()
+            np.load(video_prefix + '_bn.npy')).float()  # flow
 
         if resnet_feat.size(0) != bn_feat.size(0):
             raise Exception(
                 'number of frames does not match in feature!')
-        total_frame = bn_feat.size(0)
+        total_frame = bn_feat.size(0)  # T
 
         window_start = 0
         window_end = slide_window_size
         window_start_t = window_start * sampling_sec
         window_end_t = window_end * sampling_sec
+        
+        
         pos_seg = defaultdict(list)
         neg_overlap = [0] * anc_len_all.shape[0]
-        pos_collected = [False] * anc_len_all.shape[0]
+        pos_collected = [False] * anc_len_all.shape[0]  
         for j in range(anc_len_all.shape[0]):
             potential_match = []
             for ann_idx, ann in enumerate(annotations):
