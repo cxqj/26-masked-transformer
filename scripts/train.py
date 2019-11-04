@@ -22,6 +22,8 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 from torch.nn.utils import clip_grad_norm_
+
+# 分布式训练
 import torch.distributed as dist
 import torch.utils.data.distributed
 
@@ -137,7 +139,7 @@ if args.cuda:
 
 def get_dataset(args):
     # process text
-    text_proc, raw_data = get_vocab_and_sentences(args.dataset_file, args.max_sentence_len)
+    text_proc, raw_data = get_vocab_and_sentences(args.dataset_file, args.max_sentence_len)  # 处理后的text对象，原始标注语句信息
 
     # Create the dataset and data loader instance
     train_dataset = ANetDataset(args.feature_root,
@@ -279,12 +281,12 @@ def main(args):
     else:
         vis, vis_window = None, None
 
-    all_eval_losses = []
+    all_eval_losses = []  # 验证集loss
     all_cls_losses = []
     all_reg_losses = []
     all_sent_losses = []
     all_mask_losses = []
-    all_training_losses = []
+    all_training_losses = [] # 训练epoch loss
     for train_epoch in range(args.max_epochs):
         t_epoch_start = time.time()
         print('Epoch: {}'.format(train_epoch))
@@ -305,6 +307,7 @@ def main(args):
         all_sent_losses.append(val_sent_loss)
         all_mask_losses.append(val_mask_loss)
 
+        # 可视化训练过程
         if args.enable_visdom:
             if vis_window['loss'] is None:
                 if not args.distributed or (args.distributed and dist.get_rank() == 0):
@@ -349,6 +352,7 @@ def main(args):
                                       'dev_sentence',
                                       'dev_mask']))
 
+        #保存最优模型
         if valid_loss < best_loss:
             best_loss = valid_loss
             if (args.distributed and dist.get_rank() == 0) or not args.distributed:
@@ -356,7 +360,7 @@ def main(args):
             print('*'*5)
             print('Better validation loss {:.4f} found, save model'.format(valid_loss))
 
-        # save eval and train losses
+        # 保存验证和训练的loss
         if (args.distributed and dist.get_rank() == 0) or not args.distributed:
             torch.save({'train_loss':all_training_losses,
                         'eval_loss':all_eval_losses,
@@ -399,7 +403,7 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
     nbatches = len(train_loader)
     t_iter_start = time.time()
 
-    sample_prob = min(args.sample_prob, int(epoch/5)*0.05)
+    sample_prob = min(args.sample_prob, int(epoch/5)*0.05)  # 0 probability for use model samples during training
     for train_iter, data in enumerate(train_loader):
         (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch) = data
         img_batch = Variable(img_batch)
@@ -419,7 +423,7 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
         pred_sentence, gt_sent,
          scst_loss, mask_loss) = model(img_batch, tempo_seg_pos,
                                        tempo_seg_neg, sentence_batch,
-                                       sample_prob, args.stride_factor,
+                                       sample_prob, args.stride_factor,   # stride_factor:时序卷积核步长参数，math.ceil(kernel_len/stride_factor)
                                        scst=args.scst_weight > 0,
                                        gated_mask=args.gated_mask)
 
@@ -430,11 +434,11 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
         total_loss = cls_loss + reg_loss + sent_loss
 
         if scst_loss is not None:
-            scst_loss *= args.scst_weight
+            scst_loss *= args.scst_weight  # 0.0
             total_loss += scst_loss
 
         if mask_loss is not None:
-            mask_loss = args.mask_weight * mask_loss
+            mask_loss = args.mask_weight * mask_loss # 0.0
             total_loss += mask_loss
         else:
             mask_loss = cls_loss.new(1).fill_(0)
