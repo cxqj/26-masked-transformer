@@ -16,7 +16,7 @@ import math
 from data.utils import segment_iou
 import time
 
-def positional_encodings(x, D):
+def positional_encodings(x, D):  # D=256，sin()+cos()的维度为512
     # input x a vector of positions
     encodings = torch.zeros(x.size(0), D)
     if x.is_cuda:
@@ -24,10 +24,10 @@ def positional_encodings(x, D):
     encodings = Variable(encodings)
 
     for channel in range(D):
-        if channel % 2 == 0:
+        if channel % 2 == 0:  # 偶数位置用sin()编码
             encodings[:,channel] = torch.sin(
                 x / 10000 ** (channel / D))
-        else:
+        else:                 # 奇数位置用cos()编码
             encodings[:,channel] = torch.cos(
                 x / 10000 ** ((channel - 1) / D))
     return encodings
@@ -60,6 +60,23 @@ class DropoutTime1D(nn.Module):
 
 
 class ActionPropDenseCap(nn.Module):
+    """
+    d_model,   1024
+    d_hidden,  2048
+    n_layers,   2
+    n_heads,    8
+    vocab,      sentence
+    in_emb_dropout,  0.1
+    attn_dropout,    0.2
+    vis_emb_dropout,  0.1
+    cap_dropout,     0.2
+    nsamples,        20（正+负）
+    kernel_list,     [1, 2, 3, 4, 5, 7, 9, 11, 15, 21, 29, 41, 57, 71, 111, 161, 211, 251]
+    stride_factor,   50
+    learn_mask=False,   True
+    window_length=480
+    
+    """
     def __init__(self, d_model, d_hidden, n_layers, n_heads, vocab,
                  in_emb_dropout, attn_dropout, vis_emb_dropout,
                  cap_dropout, nsamples, kernel_list, stride_factor,
@@ -72,12 +89,13 @@ class ActionPropDenseCap(nn.Module):
         self.d_model = d_model
 
         self.mask_model = nn.Sequential(
-            nn.Linear(d_model+window_length, d_model, bias=False),
+            nn.Linear(d_model+window_length, d_model, bias=False),  # 加上窗口是对应着binary mask
             nn.BatchNorm1d(d_model),
             nn.ReLU(),
             nn.Linear(d_model, window_length),
         )
 
+        # 将rgb和flow特征降维到512，拼接后为1024，防止过拟合
         self.rgb_emb = nn.Linear(2048, d_model // 2)
         self.flow_emb = nn.Linear(1024, d_model // 2)
         self.emb_out = nn.Sequential(
@@ -86,6 +104,7 @@ class ActionPropDenseCap(nn.Module):
             nn.ReLU()
         )
 
+       # Encoder
         self.vis_emb = Transformer(d_model, 0, 0,
                                    d_hidden=d_hidden,
                                    n_layers=n_layers,
@@ -114,6 +133,7 @@ class ActionPropDenseCap(nn.Module):
                 for i in range(len(self.kernel_list))
             ])
 
+        # Decoder
         self.cap_model = RealTransformer(d_model,
                                          self.vis_emb.encoder, #share the encoder
                                          vocab,
@@ -122,9 +142,9 @@ class ActionPropDenseCap(nn.Module):
                                          n_heads=n_heads,
                                          drop_ratio=cap_dropout)
 
-        self.bce_loss = nn.BCEWithLogitsLoss()
-        self.reg_loss = nn.SmoothL1Loss()
-        self.l2_loss = nn.MSELoss()
+        self.bce_loss = nn.BCEWithLogitsLoss() # cls loss and mask loss
+        self.reg_loss = nn.SmoothL1Loss() # reg loss
+        self.l2_loss = nn.MSELoss()  # cap loss
 
     def forward(self, x, s_pos, s_neg, sentence,
                 sample_prob=0, stride_factor=10, scst=False,
@@ -136,9 +156,9 @@ class ActionPropDenseCap(nn.Module):
         x_rgb = self.rgb_emb(x_rgb.contiguous())
         x_flow = self.flow_emb(x_flow.contiguous())
 
-        x = torch.cat((x_rgb, x_flow), 2)
+        x = torch.cat((x_rgb, x_flow), 2)  # 1024
 
-        x = self.emb_out(x)
+        x = self.emb_out(x)  # 对特征进行dropout
 
         vis_feat, all_emb = self.vis_emb(x)
         # vis_feat = self.vis_dropout(vis_feat)
@@ -148,8 +168,8 @@ class ActionPropDenseCap(nn.Module):
         vis_feat = vis_feat.transpose(1,2).contiguous()
 
         prop_lst = []
+        
         for i, kernel in enumerate(self.prop_out):
-
             kernel_size = self.kernel_list[i]
             if kernel_size <= vis_feat.size(-1):
                 pred_o = kernel(vis_feat)
@@ -164,7 +184,7 @@ class ActionPropDenseCap(nn.Module):
                 anchor_c = anchor_c.expand(B, 1, anchor_c.size(0))
                 anchor_l = Variable(torch.FloatTensor(anchor_c.size()).fill_(kernel_size).type(dtype))
 
-                pred_final = torch.cat((pred_o, anchor_l, anchor_c), 1)
+                pred_final = torch.cat((pred_o, anchor_l, anchor_c), 1)   
                 prop_lst.append(pred_final)
             else:
                 print('skipping kernel sizes greater than {}'.format(
@@ -286,9 +306,9 @@ class ActionPropDenseCap(nn.Module):
 
             if gated_mask:
                 gate_scores = F.sigmoid(gate_scores)
-                window_mask = (gate_scores * pred_bin_window_mask.view(B, T, 1)
+                window_mask = (gate_scores * pred_bin_window_mask.view(B, T, 1) +  (1-gate_scores) * pred_mask)
                 # window_mask = (gate_scores * batch_mask
-                                +  (1-gate_scores) * pred_mask)
+                                #+  (1-gate_scores) * pred_mask)
             else:
                 window_mask = pred_mask
 
