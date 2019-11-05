@@ -160,7 +160,7 @@ class ActionPropDenseCap(nn.Module):
 
         x = self.emb_out(x)  # 对特征进行dropout
 
-        vis_feat, all_emb = self.vis_emb(x)
+        vis_feat, all_emb = self.vis_emb(x)  # 对输入图片特征编码
         # vis_feat = self.vis_dropout(vis_feat)
 
         # B x T x H -> B x H x T
