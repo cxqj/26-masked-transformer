@@ -37,12 +37,12 @@ parser = argparse.ArgumentParser()
 # Data input settings
 parser.add_argument('--cfgs_file', default='cfgs/anet.yml', type=str, help='dataset specific settings. anet | yc2')
 parser.add_argument('--dataset', default='', type=str, help='which dataset to use. two options: anet | yc2')
-parser.add_argument('--dataset_file', default='', type=str)
+parser.add_argument('--dataset_file', default='', type=str)  # 训练和验证集在一个文件中
 parser.add_argument('--feature_root', default='', type=str, help='the feature root')
 parser.add_argument('--dur_file', default='', type=str)
 parser.add_argument('--train_data_folder', default=['training'], type=str, nargs='+', help='training data folder')
 parser.add_argument('--val_data_folder', default=['validation'], help='validation data folder')
-parser.add_argument('--save_train_samplelist', action='store_true')
+parser.add_argument('--save_train_samplelist', action='store_true')  
 parser.add_argument('--load_train_samplelist', action='store_true')
 parser.add_argument('--train_samplelist_path', type=str, default='/z/home/luozhou/subsystem/densecap_vid/train_samplelist.pkl')
 parser.add_argument('--save_valid_samplelist', action='store_true')
@@ -69,6 +69,8 @@ parser.add_argument('--sample_prob', default=0, type=float, help='probability fo
 parser.add_argument('--slide_window_size', default=480, type=int, help='the (temporal) size of the sliding window')
 parser.add_argument('--slide_window_stride', default=20, type=int, help='the step size of the sliding window')
 parser.add_argument('--sampling_sec', default=0.5, help='sample frame (RGB and optical flow) with which time interval')
+
+# 滑动窗口生成提议的窗口大小
 parser.add_argument('--kernel_list', default=[1, 2, 3, 4, 5, 7, 9, 11, 15, 21, 29, 41, 57, 71, 111, 161, 211, 251],
                     type=int, nargs='+')
 parser.add_argument('--pos_thresh', default=0.7, type=float)
@@ -83,8 +85,8 @@ parser.add_argument('--cls_weight', default=1.0, type=float)
 parser.add_argument('--reg_weight', default=10, type=float)
 parser.add_argument('--sent_weight', default=0.25, type=float)
 parser.add_argument('--scst_weight', default=0.0, type=float)
-parser.add_argument('--mask_weight', default=0.0, type=float)
-parser.add_argument('--gated_mask', action='store_true', dest='gated_mask')
+parser.add_argument('--mask_weight', default=0.0, type=float)  # 1.0
+parser.add_argument('--gated_mask', action='store_true', dest='gated_mask')  # 是否采用门控mask
 
 # Optimization
 parser.add_argument('--optim',default='sgd', help='what update to use? rmsprop|sgd|sgdmom|adagrad|adam')
@@ -158,6 +160,7 @@ def get_dataset(args):
 
     # dist parallel, optional
     args.distributed = args.world_size > 1
+    
     if args.distributed and args.cuda:
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size)
@@ -195,16 +198,16 @@ def get_dataset(args):
 
 
 def get_model(text_proc, args):
-    sent_vocab = text_proc.vocab
+    sent_vocab = text_proc.vocab  # 字典
     model = ActionPropDenseCap(d_model=args.d_model,
                                d_hidden=args.d_hidden,
                                n_layers=args.n_layers,
                                n_heads=args.n_heads,
                                vocab=sent_vocab,
-                               in_emb_dropout=args.in_emb_dropout,
-                               attn_dropout=args.attn_dropout,
-                               vis_emb_dropout=args.vis_emb_dropout,
-                               cap_dropout=args.cap_dropout,
+                               in_emb_dropout=args.in_emb_dropout, # 0.1
+                               attn_dropout=args.attn_dropout,     # 0.2
+                               vis_emb_dropout=args.vis_emb_dropout, # 0.1
+                               cap_dropout=args.cap_dropout,       # 0.2
                                nsamples=args.train_sample,
                                kernel_list=args.kernel_list,
                                stride_factor=args.stride_factor,
