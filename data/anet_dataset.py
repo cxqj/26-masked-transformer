@@ -76,8 +76,8 @@ def get_vocab_and_sentences(dataset_file, max_length=20):
                                 eos_token='<eos>', tokenize='spacy', # 分词函数
                                 lower=True, batch_first=True,
                                 fix_length=max_length)
-    train_sentences = []
-    train_val_sentences = []
+    train_sentences = []  
+    train_val_sentences = []  # 所有的句子添加到这个列表
 
     with open(dataset_file, 'r') as data_file:
         data_all = json.load(data_file)
@@ -87,9 +87,11 @@ def get_vocab_and_sentences(dataset_file, max_length=20):
     nsentence['training'] = 0
     nsentence['validation'] = 0
     ntrain_videos = 0
+    
+    
     for vid, val in data.items():
         anns = val['annotations']
-        split = val['subset']
+        split = val['subset']  # training/validation 由于activitynet的测试集未发布，因此验证集就是测试集
         if split == 'training':
             ntrain_videos += 1
         if split in ['training', 'validation']:
@@ -102,7 +104,7 @@ def get_vocab_and_sentences(dataset_file, max_length=20):
 
     # sentences_proc = list(map(text_proc.preprocess, train_sentences)) # build vocab on train only
     sentences_proc = list(map(text_proc.preprocess, train_val_sentences)) # build vocab on train and val
-    text_proc.build_vocab(sentences_proc, min_freq=5)  # 统计单词，出现次数大于5的保留
+    text_proc.build_vocab(sentences_proc, min_freq=5)  # 构建字典
     print('# of words in the vocab: {}'.format(len(text_proc.vocab)))
     print(
         '# of sentences in training: {}, # of sentences in validation: {}'.format(
@@ -111,6 +113,9 @@ def get_vocab_and_sentences(dataset_file, max_length=20):
     print('# of training videos: {}'.format(ntrain_videos))
     return text_proc, data  
 
+   
+   
+   
 # dataloader for training
 class ANetDataset(Dataset):
     """
@@ -137,6 +142,7 @@ class ANetDataset(Dataset):
         if not load_samplelist:
             self.sample_list = []  # list of list for data samples
 
+            # 获取训练语句及其索引
             train_sentences = []
             for vid, val in raw_data.items():
                 annotations = val['annotations']
@@ -146,7 +152,10 @@ class ANetDataset(Dataset):
                             ann['sentence'] = ann['sentence'].strip()
                             train_sentences.append(ann['sentence'])
 
-            train_sentences = list(map(text_proc.preprocess, train_sentences))  # 词嵌入
+            # 词嵌入
+            train_sentences = list(map(text_proc.preprocess, train_sentences))  
+            
+            # 将词映射成 index
             sentence_idx = text_proc.numericalize(text_proc.pad(train_sentences),  # numericalize(): 把文本数据数值化，返回tensor，-1表示使用cpu
                                                        device=-1)  # put in memory
             if sentence_idx.size(0) != len(train_sentences):
@@ -157,7 +166,7 @@ class ANetDataset(Dataset):
                 for split_path in split_paths:
                     if val['subset'] in split and os.path.isfile(os.path.join(split_path, vid + '_bn.npy')):
                         for ann in val['annotations']:
-                            ann['sentence_idx'] = sentence_idx[idx]  # 加入数值化的语句
+                            ann['sentence_idx'] = sentence_idx[idx]  #将原始语句中的单词映射为单词的索引
                             idx += 1
 
             print('size of the sentence block variable ({}): {}'.format(
@@ -171,9 +180,13 @@ class ANetDataset(Dataset):
                 kernel_len = kernel_list[i]
                 anc_cen = np.arange(float((kernel_len) / 2.), float(
                     slide_window_size + 1 - (kernel_len) / 2.), math.ceil(kernel_len/stride_factor))
+               
+                # full(shape, fill_value, dtype=None, order='C')
                 anc_len = np.full(anc_cen.shape, kernel_len)  # np.full 构造一个数组，用指定值填充其元素
+                
                 anc_len_lst.append(anc_len)
                 anc_cen_lst.append(anc_cen)
+                
             anc_len_all = np.hstack(anc_len_lst)
             anc_cen_all = np.hstack(anc_cen_lst)
 
@@ -194,6 +207,7 @@ class ANetDataset(Dataset):
 
             pos_anchor_stats = []
             neg_anchor_stats = []
+            
             # load annotation per video and construct training set
             missing_prop = 0
             with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
@@ -214,6 +228,7 @@ class ANetDataset(Dataset):
                                           anc_cen_all, pos_thresh, neg_thresh))
                             vid_idx += 1
                 results = results[:vid_idx]
+                
                 for i, r in enumerate(results):
                     results[i] = r.get()
 
@@ -273,9 +288,12 @@ class ANetDataset(Dataset):
 randomly sample U = 10
 anchors from positive and negative anchor pools that correspond to one ground-truth segment for each mini-batch.
 """
+# split_path : 特征文件的路径
+# annotations: 某个视频的标注文件
 def _get_pos_neg(split_path, annotations, vid,
                  slide_window_size, sampling_sec, anc_len_all,
                  anc_cen_all, pos_thresh, neg_thresh):
+ 
     if os.path.isfile(os.path.join(split_path, vid + '_bn.npy')):
         print('video: {}'.format(vid))
 
@@ -291,17 +309,19 @@ def _get_pos_neg(split_path, annotations, vid,
         if resnet_feat.size(0) != bn_feat.size(0):
             raise Exception(
                 'number of frames does not match in feature!')
+          
         total_frame = bn_feat.size(0)  # T
 
         window_start = 0
         window_end = slide_window_size
-        window_start_t = window_start * sampling_sec
+        window_start_t = window_start * sampling_sec  # frame_to_second的结果
         window_end_t = window_end * sampling_sec
         
-        
+        # 获取正样本
         pos_seg = defaultdict(list)
         neg_overlap = [0] * anc_len_all.shape[0]
         pos_collected = [False] * anc_len_all.shape[0]  
+        
         for j in range(anc_len_all.shape[0]):
             potential_match = []
             for ann_idx, ann in enumerate(annotations):
