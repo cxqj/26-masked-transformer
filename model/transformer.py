@@ -100,7 +100,7 @@ class Attention(nn.Module):
     def forward(self, query, key, value):
         dot_products = matmul(query, key.transpose(1, 2))
         if query.dim() == 3 and (self is None or self.causal):
-            tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF
+            tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵
             if key.is_cuda:
                 tri = tri.cuda(key.get_device())
             dot_products.data.sub_(tri.unsqueeze(0))
@@ -111,9 +111,12 @@ class MultiHead(nn.Module):
     def __init__(self, d_key, d_value, n_heads, drop_ratio, causal=False):
         super().__init__()
         self.attention = Attention(d_key, drop_ratio, causal=causal)
+        # Q,K,V矩阵
         self.wq = nn.Linear(d_key, d_key, bias=False)
         self.wk = nn.Linear(d_key, d_key, bias=False)
         self.wv = nn.Linear(d_value, d_value, bias=False)
+        
+        # 合并多头结果的矩阵
         self.wo = nn.Linear(d_value, d_key, bias=False)
         self.n_heads = n_heads
 
@@ -138,6 +141,7 @@ class EncoderLayer(nn.Module):
 
     def __init__(self, d_model, d_hidden, n_heads, drop_ratio):
         super().__init__()
+        # 每个编码层包含一个self_attention和feedforward模块，其中每个模块用残差连接
         self.selfattn = ResidualBlock(
             MultiHead(d_model, d_model, n_heads, drop_ratio),
             d_model, drop_ratio)
@@ -316,7 +320,7 @@ class Transformer(nn.Module):
 
 
 class RealTransformer(nn.Module):
-
+    # vocab_trg = vocab
     def __init__(self, d_model, encoder, vocab_trg, d_hidden=2048,
                  n_layers=6, n_heads=8, drop_ratio=0.1):
         super().__init__()
@@ -332,7 +336,10 @@ class RealTransformer(nn.Module):
         return ' '.join(self.decoder.vocab.itos[i] for i in data).replace(
             ' <eos>', '').replace(' <pad>', '').replace(' .', '').replace('  ', '')
 
+    # x ： 视觉特征
+    # s ： sentence
     def forward(self, x, s, x_mask=None, sample_prob=0):
+        # 在解码时先要经过一次编码
         encoding = self.encoder(x, x_mask)
 
         max_sent_len = 20
@@ -366,6 +373,7 @@ class RealTransformer(nn.Module):
 
         return logits, targets
 
+    # 预测句子
     def greedy(self, x, x_mask, T):
         encoding = self.encoder(x, x_mask)
 
