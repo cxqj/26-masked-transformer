@@ -382,7 +382,14 @@ class RealTransformer(nn.Module):
         for i in range(pred.data.size(0)):
             sent_lst.append(self.denum(pred.data[i]))
         return sent_lst
-
+  
+    # 暂时不知道干嘛的
+    """
+    scst_loss indicates self-critical sequence training (as in https://arxiv.org/abs/1612.00563). 
+    We didn't report results w/ this training loss and hence it's deprecated. Still, we keep this 
+    option out there in case people need (might need to upgrade some of the code to pytorch 0.4
+    
+    """
     def scst(self, x, x_mask, s):
         self.scorer = Meteor()
         encoding = self.encoder(x, x_mask)
