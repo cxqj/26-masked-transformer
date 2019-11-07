@@ -194,7 +194,7 @@ def get_dataset(args):
                               num_workers=args.num_workers,
                               collate_fn=anet_collate_fn)
 
-    return train_loader, valid_loader, text_proc, train_sampler
+    return train_loader, valid_loader, text_proc, train_sampler   # train_sampler = None
 
 
 def get_model(text_proc, args):
