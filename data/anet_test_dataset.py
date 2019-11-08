@@ -23,6 +23,7 @@ class ANetTestDataset(Dataset):
 
         self.sample_list = []  # list of list for data samples
 
+        # 获取所有的验证语句
         test_sentences = []
         for vid, val in raw_data.items():
             annotations = val['annotations']
@@ -58,12 +59,12 @@ class ANetTestDataset(Dataset):
     def __getitem__(self, index):
         video_prefix = self.sample_list[index]
 
-        resnet_feat = torch.from_numpy(np.load(video_prefix + '_resnet.npy')).float()
-        bn_feat = torch.from_numpy(np.load(video_prefix + '_bn.npy')).float()
+        resnet_feat = torch.from_numpy(np.load(video_prefix + '_resnet.npy')).float()  # (T,2048)
+        bn_feat = torch.from_numpy(np.load(video_prefix + '_bn.npy')).float() # (T,1024)
 
         if self.learn_mask:
             img_feat = torch.FloatTensor(np.zeros((self.slide_window_size,
-                                                   resnet_feat.size(1)+bn_feat.size(1))))
+                                                   resnet_feat.size(1)+bn_feat.size(1)))) # (480,3072)
             torch.cat((resnet_feat, bn_feat), dim=1,
                       out=img_feat[:min(bn_feat.size(0), self.slide_window_size)])
         else:
