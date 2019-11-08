@@ -430,8 +430,8 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
                                        scst=args.scst_weight > 0,
                                        gated_mask=args.gated_mask)
 
-        cls_loss = model.module.bce_loss(pred_score, gt_score) * args.cls_weight
-        reg_loss = model.module.reg_loss(pred_offsets, gt_offsets) * args.reg_weight
+        cls_loss = model.module.bce_loss(pred_score, gt_score) * args.cls_weight  # 1.0
+        reg_loss = model.module.reg_loss(pred_offsets, gt_offsets) * args.reg_weight 
         sent_loss = F.cross_entropy(pred_sentence, gt_sent) * args.sent_weight
 
         total_loss = cls_loss + reg_loss + sent_loss
@@ -508,6 +508,11 @@ def valid(model, loader):
     val_reg_loss = []
     val_sent_loss = []
     val_mask_loss = []
+    # 每个data包含以下信息 ： 
+    #    图片特征：(B,480,3072)
+    #    fg ： (B,10,4)
+    #    bg :  (B,10,2)
+    #    sent: (B,20)
     for iter, data in enumerate(loader):
         (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch) = data
         with torch.no_grad():
