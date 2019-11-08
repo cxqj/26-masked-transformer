@@ -348,12 +348,12 @@ class ActionPropDenseCap(nn.Module):
                 pred_sentence, gt_cent,
                 scst_loss, mask_loss)
 
-
+    # 测试时调用
     def inference(self, x, actual_frame_length, sampling_sec,
                   min_prop_num, max_prop_num,
                   min_prop_num_before_nms, pos_thresh, stride_factor,
                   gated_mask=False):
-        B, T, _ = x.size()
+        B, T, _ = x.size()  # 1,480,3072
         dtype = x.data.type()
 
         x_rgb, x_flow = torch.split(x, 2048, 2)
@@ -367,7 +367,7 @@ class ActionPropDenseCap(nn.Module):
         vis_feat, all_emb = self.vis_emb(x)
         # vis_feat = self.vis_dropout(vis_feat)
 
-        # B x T x H -> B x H x T
+        # B x T x C -> B x C x T
         # for 1d conv
         vis_feat = vis_feat.transpose(1,2).contiguous()
 
@@ -425,11 +425,13 @@ class ActionPropDenseCap(nn.Module):
             crt_pred_len = pred_len.data[b]
             pred_masks = []
             batch_result = []
+            
             crt_nproposal = 0
+            # 逐元素比较input和other ， 即是否input>otherinput>other 如果两个张量有相同的形状和元素值，则返回True ，否则 False。
             nproposal = torch.sum(torch.gt(prop_all.data[b, 0, :], pos_thresh))
             nproposal = min(max(nproposal, min_prop_num_before_nms),
                             prop_all.size(-1))
-            pred_results = np.empty((nproposal, 3))
+            pred_results = np.empty((nproposal, 3))  # (窗口开始，窗口结束，得分)
             _, sel_idx = torch.topk(crt_pred[0], nproposal)
  
             start_t = time.time()
@@ -451,7 +453,7 @@ class ActionPropDenseCap(nn.Module):
                             hasoverlap = True
 
                     if not hasoverlap:
-                        pred_bin_window_mask = torch.zeros(1, T, 1).type(dtype)
+                        pred_bin_window_mask = torch.zeros(1, T, 1).type(dtype)  # (1,480,1)
                         win_start = math.floor(max(min(pred_start, min(original_frame_len, T)-1), 0))
                         win_end = math.ceil(max(min(pred_end, min(original_frame_len, T)), 1))
                         # if win_start >= win_end:
@@ -506,28 +508,32 @@ class ActionPropDenseCap(nn.Module):
                 crt_nproposal = 1
 
             pred_masks = Variable(torch.cat(pred_masks, 0))
-            batch_x = x[b].unsqueeze(0).expand(pred_masks.size(0), x.size(1), x.size(2))
+            
+            #将输入特征拓展到和提议数相同
+            batch_x = x[b].unsqueeze(0).expand(pred_masks.size(0), x.size(1), x.size(2))  # (1,480,1024)-->(91,480,1024)
 
             if self.learn_mask:
-                pe_pred_start = torch.cat(pred_start_lst, 0)
-                pe_pred_end = torch.cat(pred_end_lst, 0)
-                pe_anchor_start = torch.cat(anchor_start_lst, 0)
-                pe_anchor_end = torch.cat(anchor_end_lst, 0)
+                pe_pred_start = torch.cat(pred_start_lst, 0)  # （91）
+                pe_pred_end = torch.cat(pred_end_lst, 0)  # (91)
+                pe_anchor_start = torch.cat(anchor_start_lst, 0) # (91)
+                pe_anchor_end = torch.cat(anchor_end_lst, 0)  # (91)
 
-                pe_locs = torch.cat((pe_pred_start, pe_pred_end, pe_anchor_start, pe_anchor_end), 0)
-                pos_encs = positional_encodings(pe_locs, self.d_model // 4)
+                # 对位置进行编码
+                pe_locs = torch.cat((pe_pred_start, pe_pred_end, pe_anchor_start, pe_anchor_end), 0)  # (364)
+                pos_encs = positional_encodings(pe_locs, self.d_model // 4)  # (364,256)
                 npos = pos_encs.size(0)
-                anchor_window_mask = Variable(torch.cat(anchor_window_mask, 0))
+                anchor_window_mask = Variable(torch.cat(anchor_window_mask, 0)) # (91,480)
+                
                 in_pred_mask = torch.cat((pos_encs[:npos//4], pos_encs[npos//4:npos//4*2],
                                           pos_encs[npos//4 * 2:npos//4 * 3],
                                           pos_encs[npos//4 * 3:npos//4 * 4],
-                                          anchor_window_mask), 1)
+                                          anchor_window_mask), 1)  # (91,1504)
                 pred_cont_masks  = self.mask_model(in_pred_mask).unsqueeze(2)
 
                 if gated_mask:
                     gate_scores = Variable(torch.cat(gate_scores, 0).view(-1,1,1))
                     window_mask = (gate_scores * pred_masks
-                                   + (1 - gate_scores) * pred_cont_masks)
+                                   + (1 - gate_scores) * pred_cont_masks)  # (91,480,1)
 
                 else:
                     window_mask = pred_cont_masks
@@ -538,10 +544,14 @@ class ActionPropDenseCap(nn.Module):
 
             pred_sentence = []
             # use cap_batch as caption batch size
-            cap_batch = math.ceil(480*256/T)
+            cap_batch = math.ceil(480*256/T)  # 256
+            
             for sent_i in range(math.ceil(window_mask.size(0)/cap_batch)):
-                batch_start = sent_i*cap_batch
-                batch_end = min((sent_i+1)*cap_batch, window_mask.size(0))
+                batch_start = sent_i*cap_batch  # 0
+                batch_end = min((sent_i+1)*cap_batch, window_mask.size(0))  # 91
+               
+                # batch_x : (91,480,1024)
+                # window_mask : (91,480,1)
                 pred_sentence += self.cap_model.greedy(batch_x[batch_start:batch_end],
                                                        window_mask[batch_start:batch_end], 20)
 
