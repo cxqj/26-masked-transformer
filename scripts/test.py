@@ -55,10 +55,13 @@ parser.add_argument('--n_layers', default=2, type=int, help='number of layers in
 
 # Model settings: Proposal and mask
 parser.add_argument('--slide_window_size', default=480, type=int, help='the (temporal) size of the sliding window')
+
 parser.add_argument('--slide_window_stride', default=20, type=int, help='the step size of the sliding window')
 parser.add_argument('--sampling_sec', default=0.5, help='sample frame (RGB and optical flow) with which time interval')
 parser.add_argument('--kernel_list', default=[1, 2, 3, 4, 5, 7, 9, 11, 15, 21, 29, 41, 57, 71, 111, 161, 211, 251],
                     type=int, nargs='+')
+
+# 在测试时指定了最大和最小的提议数量
 parser.add_argument('--max_prop_num', default=500, type=int, help='the maximum number of proposals per video')
 parser.add_argument('--min_prop_num', default=50, type=int, help='the minimum number of proposals per video')
 parser.add_argument('--min_prop_before_nms', default=200, type=int, help='the minimum number of proposals per video')
@@ -162,7 +165,7 @@ def validate(model, loader, args):
     for data in loader:
         image_feat, original_num_frame, video_prefix = data
         with torch.no_grad():
-            image_feat = Variable(image_feat)
+            image_feat = Variable(image_feat)  # (1,480,3072)
             # ship data to gpu
             if args.cuda:
                 image_feat = image_feat.cuda()
@@ -172,6 +175,8 @@ def validate(model, loader, args):
                 frame_to_second[video_prefix[0].split('/')[-1]] = args.sampling_sec
                 print("cannot find frame_to_second for video {}".format(video_prefix[0].split('/')[-1]))
             sampling_sec = frame_to_second[video_prefix[0].split('/')[-1]] # batch_size has to be 1
+            
+            # 测试时调用的是推理函数
             all_proposal_results = model.inference(image_feat,
                                                    original_num_frame,
                                                    sampling_sec,
