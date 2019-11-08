@@ -52,9 +52,11 @@ def positional_encodings_like(x, t=None):
                 positions / 10000 ** ((channel - 1) / x.size(2)))
     return Variable(encodings)
 
+# targets：对应的真实语句的标注(2,19)
+# out : (2,19,1024)
 def mask(targets, out):
-    mask = (targets != 1)
-    out_mask = mask.unsqueeze(-1).expand_as(out)
+    mask = (targets != 1)   
+    out_mask = mask.unsqueeze(-1).expand_as(out)  # （2,19,1024）
     return targets[mask], out[out_mask].view(-1, out.size(-1))
 
 # torch.matmul can't do (4, 3, 2) @ (4, 2) -> (4, 3)
@@ -338,6 +340,7 @@ class RealTransformer(nn.Module):
 
     # x ： 视觉特征
     # s ： sentence
+    # x_mask: 得到的提议对应的窗口mask
     def forward(self, x, s, x_mask=None, sample_prob=0):
         # 在解码时先要经过一次编码
         encoding = self.encoder(x, x_mask)
@@ -354,9 +357,9 @@ class RealTransformer(nn.Module):
             logits = self.decoder.out(h)
         else:
             if sample_prob == 0:
-                h = self.decoder(s[:, :-1].contiguous(), encoding)
-                targets, h = mask(s[:, 1:].contiguous(), h)
-                logits = self.decoder.out(h)
+                h = self.decoder(s[:, :-1].contiguous(), encoding)   # 得到语句特征和对应提议视觉特征融合后的特征
+                targets, h = mask(s[:, 1:].contiguous(), h)  # targets:目标语句(21)  h:对应的特征(21,1024)  
+                logits = self.decoder.out(h) # (21,24)
             else:
                 model_pred = self.decoder.sampling(encoding, s,
                                                    s.size(1) - 2,
