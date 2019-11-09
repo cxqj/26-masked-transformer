@@ -216,7 +216,7 @@ def eval_results(densecap_result, prop_result, args):
                       'details':'global_pool layer from BN-Inception pretrained from ActivityNet \
                                  and ImageNet (https://github.com/yjxiong/anet2016-cuhk)'}}
     with open(os.path.join('./results/', 'densecap_'+args.val_data_folder+'_'+args.id+ '.json'), 'w') as f:
-        json.dump(dense_cap_all, f)
+        json.dump(dense_cap_all, f)  # 一个提议对应一句描述
 
     subprocess.Popen(["python2", args.densecap_eval_file, "-s", \
                       os.path.join('./results/', 'densecap_'+args.val_data_folder+'_' + args.id + '.json'), \
