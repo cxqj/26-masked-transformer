@@ -79,6 +79,8 @@ parser.add_argument('--stride_factor', default=50, type=int, help='the proposal 
 
 # Optimization: General
 parser.add_argument('--max_epochs', default=20, type=int, help='max number of epochs to run for')
+
+# 注意batch_size指的不是多少个视频，而是指多少个gt的segments，因为加载数据加载的是self.sample_list,每个gt提议都对应一行
 parser.add_argument('--batch_size', default=32, type=int, help='what is the batch size in number of images per batch? (there will be x seq_per_img sentences)')
 parser.add_argument('--valid_batch_size', default=64, type=int)
 parser.add_argument('--cls_weight', default=1.0, type=float)
@@ -198,7 +200,7 @@ def get_dataset(args):
 
 
 def get_model(text_proc, args):
-    sent_vocab = text_proc.vocab  # 字典
+    sent_vocab = text_proc.vocab  # 字典对象
     model = ActionPropDenseCap(d_model=args.d_model,
                                d_hidden=args.d_hidden,
                                n_layers=args.n_layers,
@@ -272,7 +274,7 @@ def main(args):
     # scheduler = lr_scheduler.ExponentialLR(optimizer, 0.6)
 
     # Number of parameter blocks in the network
-    print("# of param blocks: {}".format(str(len(list(model.parameters())))))
+    print("# of param blocks: {}".format(str(len(list(model.parameters())))))  # 287
 
     best_loss = float('inf')
 
@@ -284,12 +286,15 @@ def main(args):
     else:
         vis, vis_window = None, None
 
-    all_eval_losses = []  # 验证集loss
+    # 验证loss
+    all_eval_losses = [] 
     all_cls_losses = []
     all_reg_losses = []
     all_sent_losses = []
     all_mask_losses = []
-    all_training_losses = [] # 训练epoch loss
+    
+    # 训练loss
+    all_training_losses = []  
     for train_epoch in range(args.max_epochs):
         t_epoch_start = time.time()
         print('Epoch: {}'.format(train_epoch))
@@ -409,10 +414,10 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
     sample_prob = min(args.sample_prob, int(epoch/5)*0.05)  # 0 probability for use model samples during training
     for train_iter, data in enumerate(train_loader):
         (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch) = data
-        img_batch = Variable(img_batch)
-        tempo_seg_pos = Variable(tempo_seg_pos)
-        tempo_seg_neg = Variable(tempo_seg_neg)
-        sentence_batch = Variable(sentence_batch)
+        img_batch = Variable(img_batch)   # (5,480,3072)
+        tempo_seg_pos = Variable(tempo_seg_pos) # (5,10,4)
+        tempo_seg_neg = Variable(tempo_seg_neg) # (5,10,2)
+        sentence_batch = Variable(sentence_batch) # (5,20)
 
         if args.cuda:
             img_batch = img_batch.cuda()
