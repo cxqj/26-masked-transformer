@@ -103,8 +103,8 @@ def get_vocab_and_sentences(dataset_file, max_length=20):
                 nsentence[split] += 1
 
     # sentences_proc = list(map(text_proc.preprocess, train_sentences)) # build vocab on train only
-    sentences_proc = list(map(text_proc.preprocess, train_val_sentences)) # build vocab on train and val
-    text_proc.build_vocab(sentences_proc, min_freq=5)  # 构建字典
+    sentences_proc = list(map(text_proc.preprocess, train_val_sentences)) # 分成
+    text_proc.build_vocab(sentences_proc, min_freq=5)  # 构建字典，并建立单词的索引
     print('# of words in the vocab: {}'.format(len(text_proc.vocab)))
     print(
         '# of sentences in training: {}, # of sentences in validation: {}'.format(
@@ -134,7 +134,7 @@ class ANetDataset(Dataset):
                  load_samplelist=False, sample_listpath=None):
         super(ANetDataset, self).__init__()
 
-        split_paths = []  #  特征文件路径
+        split_paths = []  #  feature_path
         for split_dev in split:
             split_paths.append(os.path.join(image_path, split_dev))
         self.slide_window_size = slide_window_size
@@ -142,7 +142,7 @@ class ANetDataset(Dataset):
         if not load_samplelist:
             self.sample_list = []  # list of list for data samples
 
-            # 获取训练语句及其索引
+            # 获取训练语句
             train_sentences = []
             for vid, val in raw_data.items():
                 annotations = val['annotations']
@@ -152,28 +152,27 @@ class ANetDataset(Dataset):
                             ann['sentence'] = ann['sentence'].strip()
                             train_sentences.append(ann['sentence'])
 
-            # 词嵌入
             train_sentences = list(map(text_proc.preprocess, train_sentences))  
             
-            # 将词映射成 index
+            # transfor correspond sentens to vocab index and padding it to max_len
             sentence_idx = text_proc.numericalize(text_proc.pad(train_sentences),  # numericalize(): 把文本数据数值化，返回tensor，-1表示使用cpu
                                                        device=-1)  # put in memory
             if sentence_idx.size(0) != len(train_sentences):
                 raise Exception("Error in numericalize sentences")
 
+            #在原始标注中添加对应的numerical后的语句
             idx = 0
             for vid, val in raw_data.items():
                 for split_path in split_paths:
                     if val['subset'] in split and os.path.isfile(os.path.join(split_path, vid + '_bn.npy')):
                         for ann in val['annotations']:
-                            ann['sentence_idx'] = sentence_idx[idx]  #将原始语句中的单词映射为单词的索引
+                            ann['sentence_idx'] = sentence_idx[idx]  
                             idx += 1
 
             print('size of the sentence block variable ({}): {}'.format(
-                split, sentence_idx.size()))
+                split, sentence_idx.size()))  # [总的训练语句数，20]
 
-            # all the anchors
-            # 预设anchor
+            # all the anchors  提前预设出来一系列不同中心点和尺度的anchor
             anc_len_lst = []
             anc_cen_lst = []
             for i in range(0, len(kernel_list)):
@@ -190,12 +189,14 @@ class ANetDataset(Dataset):
             anc_len_all = np.hstack(anc_len_lst)
             anc_cen_all = np.hstack(anc_cen_lst)
 
+            # 之所以要运行这一步是因为作者在抽取特征的是间隔抽帧的
             frame_to_second = {}
             sampling_sec = 0.5 # hard coded, only support 0.5
             with open(dur_file) as f:
                 if dataset == 'anet':
                     for line in f:
                         vid_name, vid_dur, vid_frame = [l.strip() for l in line.split(',')]
+                        # 其实说白了就是一半的帧占总帧数的比例，因为前面的vid_frame取整了，所以不是严格的50%
                         frame_to_second[vid_name] = float(vid_dur)*int(float(vid_frame)*1./int(float(vid_dur))*sampling_sec)*1./float(vid_frame)
                     frame_to_second['_0CqozZun3U'] = sampling_sec # a missing video in anet
                 elif dataset == 'yc2':
@@ -205,6 +206,7 @@ class ANetDataset(Dataset):
                 else:
                     raise NotImplementedError
 
+            # 获取正负样本
             pos_anchor_stats = []
             neg_anchor_stats = []
             
@@ -242,9 +244,9 @@ class ANetDataset(Dataset):
                     for k in pos_seg:
                         # all neg_segs are the same, since they need to be negative
                         # for all samples
-                        all_segs = pos_seg[k]
-                        sent = all_segs[0][-1] #[s[-1] for s in all_segs]
-                        other = [s[:-1] for s in all_segs]
+                        all_segs = pos_seg[k] 
+                        sent = all_segs[0][-1]   # sent
+                        other = [s[:-1] for s in all_segs]  # (j,overlap,len_off,cen_off)
                         self.sample_list.append(
                             (video_prefix, other, sent, neg_seg, total_frame))
                         npos_seg += len(pos_seg[k])
@@ -288,8 +290,11 @@ class ANetDataset(Dataset):
 randomly sample U = 10
 anchors from positive and negative anchor pools that correspond to one ground-truth segment for each mini-batch.
 """
-# split_path : 特征文件的路径
-# annotations: 某个视频的标注文件
+
+# pos_seg :{anno_idx : (j,overlap,len_off,cen_off,sent)}
+# neg_seg: [(j,overlap)]
+
+
 def _get_pos_neg(split_path, annotations, vid,
                  slide_window_size, sampling_sec, anc_len_all,
                  anc_cen_all, pos_thresh, neg_thresh):
@@ -300,11 +305,11 @@ def _get_pos_neg(split_path, annotations, vid,
         video_prefix = os.path.join(split_path, vid)
 
         # load feature
-        # T x H
+        # T x C
         resnet_feat = torch.from_numpy(
-            np.load(video_prefix + '_resnet.npy')).float()  # apperance
+            np.load(video_prefix + '_resnet.npy')).float()  # (T,2048)  RGB
         bn_feat = torch.from_numpy(
-            np.load(video_prefix + '_bn.npy')).float()  # flow
+            np.load(video_prefix + '_bn.npy')).float()  # (T,1024) FLOW
 
         if resnet_feat.size(0) != bn_feat.size(0):
             raise Exception(
@@ -314,22 +319,28 @@ def _get_pos_neg(split_path, annotations, vid,
 
         window_start = 0
         window_end = slide_window_size
-        window_start_t = window_start * sampling_sec  # frame_to_second的结果
+        window_start_t = window_start * sampling_sec 
         window_end_t = window_end * sampling_sec
         
         # 获取正样本
-        pos_seg = defaultdict(list)
-        neg_overlap = [0] * anc_len_all.shape[0]
-        pos_collected = [False] * anc_len_all.shape[0]  
+        # pos_seg 以字典的形式存放
+        # 其中字典的键是annotation中Gt的索引，值是对应的提议anchor的信息
+        pos_seg = defaultdict(list)  # 解决了dict中不存在默认值的问题,如果不存在键，默认为list
+        neg_overlap = [0] * anc_len_all.shape[0]  # 6338
+        pos_collected = [False] * anc_len_all.shape[0]   
         
+        # 遍历所有预设的anchor
         for j in range(anc_len_all.shape[0]):
             potential_match = []
             for ann_idx, ann in enumerate(annotations):
                 seg = ann['segment']
+                # 为什么要进行这一步？？
                 gt_start = seg[0] / sampling_sec
                 gt_end = seg[1] / sampling_sec
                 if gt_start > gt_end:
                     gt_start, gt_end = gt_end, gt_start
+                  
+                # 预设的anchor不能超过total_frame并且gt在窗口内
                 if anc_cen_all[j] + anc_len_all[j] / 2. <= total_frame:
                     if window_start_t <= seg[
                         0] and window_end_t + sampling_sec * 2 >= \
@@ -345,6 +356,10 @@ def _get_pos_neg(split_path, annotations, vid,
                                 (gt_end - gt_start) / anc_len_all[j])
                             cen_offset = ((gt_end + gt_start) / 2. -
                                           anc_cen_all[j]) / anc_len_all[j]
+                         
+                            # ann_idx : gt中的哪一个seg
+                            # j ： 与gt重叠>pos_thresh的anchor索引
+                            # ann_idx--->j
                             potential_match.append(
                                 (ann_idx, j, overlap, len_offset, cen_offset,
                                  ann['sentence_idx']))
@@ -363,6 +378,7 @@ def _get_pos_neg(split_path, annotations, vid,
                 item = potential_match[0]
                 pos_seg[item[0]].append(tuple(item[1:]))
 
+        # 有些视频的标注没有任何匹配的annotations
         missing_prop = 0
         if len(pos_seg.keys()) != len(annotations):
             print('Some annotations in video {} does not have '
