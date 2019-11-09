@@ -273,8 +273,9 @@ class ANetDataset(Dataset):
     def __len__(self):
         return len(self.sample_list)
 
+    # 在加载数据的时候先调用这个函数获得batch_size中的每一个数据
     def __getitem__(self, index):
-        video_prefix, pos_seg, sentence, neg_seg, total_frame = self.sample_list[index]
+        video_prefix, pos_seg, sentence, neg_seg, total_frame = self.sample_list[index]  # 每一个正样本对应列表的一个元素
         resnet_feat = torch.from_numpy(
             np.load(video_prefix + '_resnet.npy')).float()
         bn_feat = torch.from_numpy(np.load(video_prefix + '_bn.npy')).float()
@@ -402,7 +403,8 @@ def _get_pos_neg(split_path, annotations, vid,
     else:
         return None
 
-
+# 在调用这个函数将分别加载得到的数据拼接成一个整的batch
+# 在这一步有一个非常重要的操作就是分别随机选取10个正负样本
 def anet_collate_fn(batch_lst):
     sample_each = 10  # TODO, hard coded
     pos_seg, sentence, neg_seg, img_feat = batch_lst[0]
@@ -425,7 +427,7 @@ def anet_collate_fn(batch_lst):
         sentence_batch[batch_idx] = sentence.data
 
         # sample positive anchors
-        perm_idx = torch.randperm(len(pos_seg))
+        perm_idx = torch.randperm(len(pos_seg))  # 随机打乱正样本的索引
         if len(pos_seg) >= sample_each:
             tempo_seg_pos[batch_idx,:,:] = pos_seg_tensor[perm_idx[:sample_each]]
         else:
@@ -444,4 +446,6 @@ def anet_collate_fn(batch_lst):
                                     sample_each - len(neg_seg),True)
             tempo_seg_neg[batch_idx, len(neg_seg):, :] = neg_seg_tensor[idx]
 
+            
+            
     return (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch)
