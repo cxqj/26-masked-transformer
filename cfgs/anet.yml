@@ -5,4 +5,4 @@ feature_root: "/z/home/luozhou/dataset/anet/ActivityNet"
 # 用于评估结果时使用
 densecap_references: ["./data/anet/val_1.json", "./data/anet/val_2.json"]
 dur_file: "./data/anet/anet_duration_frame.csv"
-kernel_list: [1, 2, 3, 4, 5, 7, 9, 11, 15, 21, 29, 41, 57, 71, 111, 161, 211, 251]
+kernel_list: [1, 2, 3, 4, 5, 7, 9, 11, 15, 21, 29, 41, 57, 71, 111, 161, 211, 251]  # 这里的kernel_list实际上是anchor的长度，在后面虽然也代表着一维卷积的kernel长度
