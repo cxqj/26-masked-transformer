@@ -24,21 +24,22 @@ import uuid
 import numpy as np
 
 sys.path.insert(0, './tools/densevid_eval/coco-caption') # Hack to allow the import of pycocoeval
-from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer  # 分词器
 from pycocoevalcap.meteor.meteor import Meteor
 
 # import contexts
 
 INF = 1e10
 
-def positional_encodings_like(x, t=None):
+def positional_encodings_like(x, t=None): # (5,480,1024)
     if t is None:
         positions = torch.arange(0, x.size(1)).float()
         if x.is_cuda:
            positions = positions.cuda(x.get_device())
     else:
         positions = t
-    encodings = torch.zeros(*x.size()[1:])
+    # encoding用来保存位置编码结果
+    encodings = torch.zeros(*x.size()[1:])  # (480,1024)
     if x.is_cuda:
         encodings = encodings.cuda(x.get_device())
 
@@ -46,11 +47,11 @@ def positional_encodings_like(x, t=None):
     for channel in range(x.size(-1)):
         if channel % 2 == 0:
             encodings[:, channel] = torch.sin(
-                positions / 10000 ** (channel / x.size(2)))
+                positions / 10000 ** (channel / x.size(2)))   # 不太理解位置编码？？
         else:
             encodings[:, channel] = torch.cos(
                 positions / 10000 ** ((channel - 1) / x.size(2)))
-    return Variable(encodings)
+    return Variable(encodings)  # (480,1024)
 
 # targets：对应的真实语句的标注(2,19)
 # out : (2,19,1024)
@@ -88,25 +89,27 @@ class ResidualBlock(nn.Module):
         self.dropout = nn.Dropout(drop_ratio)
         self.layernorm = LayerNorm(d_model)
 
-    def forward(self, *x):
-        return self.layernorm(x[0] + self.dropout(self.layer(*x)))
+    def forward(self, *x):  # *x = (q,k,v)
+        return self.layernorm(x[0] + self.dropout(self.layer(*x)))  # (5,480,1024) + (5,480,1024)
+
 
 class Attention(nn.Module):
 
     def __init__(self, d_key, drop_ratio, causal):
         super().__init__()
-        self.scale = math.sqrt(d_key)
+        self.scale = math.sqrt(d_key)  #32
         self.dropout = nn.Dropout(drop_ratio)
         self.causal = causal
 
-    def forward(self, query, key, value):
-        dot_products = matmul(query, key.transpose(1, 2))
+    def forward(self, query, key, value):  # (5,480,128)
+        dot_products = matmul(query, key.transpose(1, 2))  # (5,480,128) x (5,128,480) = (5,480,480)
         if query.dim() == 3 and (self is None or self.causal):
             tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵
             if key.is_cuda:
                 tri = tri.cuda(key.get_device())
             dot_products.data.sub_(tri.unsqueeze(0))
-        return matmul(self.dropout(F.softmax(dot_products / self.scale, dim=-1)), value)
+        # 可以理解注意力机制就是对不同时间点的特征图加权求和
+        return matmul(self.dropout(F.softmax(dot_products / self.scale, dim=-1)), value) # (5,480,480)x(5,480,128)=(5,480,128)
 
 class MultiHead(nn.Module):
 
@@ -118,16 +121,19 @@ class MultiHead(nn.Module):
         self.wk = nn.Linear(d_key, d_key, bias=False)
         self.wv = nn.Linear(d_value, d_value, bias=False)
         
-        # 合并多头结果的矩阵
+        # concat matrix
         self.wo = nn.Linear(d_value, d_key, bias=False)
         self.n_heads = n_heads
 
     def forward(self, query, key, value):
-        query, key, value = self.wq(query), self.wk(key), self.wv(value)
+        query, key, value = self.wq(query), self.wk(key), self.wv(value)  # (5,480,1024)
+      
+        # (5,480,1024)-->(5,480,128)x8
         query, key, value = (
             x.chunk(self.n_heads, -1) for x in (query, key, value))
+        
         return self.wo(torch.cat([self.attention(q, k, v)
-                          for q, k, v in zip(query, key, value)], -1))
+                          for q, k, v in zip(query, key, value)], -1))  # [(5,480,128),(5,480,128),...(5,480,128)]-->(5,480,1024)-->(5,480,1024)
 
 class FeedForward(nn.Module):
 
@@ -158,10 +164,10 @@ class DecoderLayer(nn.Module):
     def __init__(self, d_model, d_hidden, n_heads, drop_ratio):
         super().__init__()
         self.selfattn = ResidualBlock(
-            MultiHead(d_model, d_model, n_heads, drop_ratio, causal=True),
+            MultiHead(d_model, d_model, n_heads, drop_ratio, causal=True),   # 因为在解码的过程中不希望得到未来的信息，因此需要通过创建一个上三角矩阵
             d_model, drop_ratio)
         self.attention = ResidualBlock(
-            MultiHead(d_model, d_model, n_heads, drop_ratio),
+            MultiHead(d_model, d_model, n_heads, drop_ratio),   # 在解码器中相比于编码器多了一个编码器与解码器间的注意力机制
             d_model, drop_ratio)
         self.feedforward = ResidualBlock(FeedForward(d_model, d_hidden),
                                          d_model, drop_ratio)
@@ -181,9 +187,9 @@ class Encoder(nn.Module):
              for i in range(n_layers)])
         self.dropout = nn.Dropout(drop_ratio)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None):  # x:(5,480,1024)
         # x = self.linear(x)
-        x = x+positional_encodings_like(x)
+        x = x+positional_encodings_like(x)  # (5,480,1024)  在送入编码模块前首先要加上位置信息的编码
         x = self.dropout(x)
         if mask is not None:
             x = x*mask
@@ -203,10 +209,10 @@ class Decoder(nn.Module):
         self.layers = nn.ModuleList(
             [DecoderLayer(d_model, d_hidden, n_heads, drop_ratio)
              for i in range(n_layers)])
-        self.out = nn.Linear(d_model, len(vocab))
+        self.out = nn.Linear(d_model, len(vocab))   # 1024-->24
         self.dropout = nn.Dropout(drop_ratio)
         self.d_model = d_model
-        self.vocab = vocab
+        self.vocab = vocab   # 
         self.d_out = len(vocab)
 
     def forward(self, x, encoding):
@@ -299,9 +305,9 @@ class Decoder(nn.Module):
 
 
 class Transformer(nn.Module):
-
+    
     def __init__(self, d_model, n_vocab_src, vocab_trg, d_hidden=2048,
-                 n_layers=6, n_heads=8, drop_ratio=0.1):
+                 n_layers=6, n_heads=8, drop_ratio=0.1):  # attn_dropout:0.2 
         super().__init__()
         self.encoder = Encoder(d_model, d_hidden, n_vocab_src, n_layers,
                                n_heads, drop_ratio)
@@ -338,7 +344,7 @@ class RealTransformer(nn.Module):
         self.decoder = Decoder(d_model, d_hidden, vocab_trg, n_layers,
                               n_heads, drop_ratio)
         self.n_layers = n_layers
-        self.tokenizer = PTBTokenizer()
+        self.tokenizer = PTBTokenizer()  # 分词器
 
     def denum(self, data):
         return ' '.join(self.decoder.vocab.itos[i] for i in data).replace(
