@@ -218,16 +218,22 @@ class Decoder(nn.Module):
         return x
 
     def greedy(self, encoding, T):
-        B, _, H = encoding[0].size()
+        B, _, H = encoding[0].size()  # (91,480,1024)
         # change T to 20, max # of words in a sentence
         # T = 40
         # T *= 2
+        
+        # 保存预测的单词结果
         prediction = Variable(encoding[0].data.new(B, T).long().fill_(
-            self.vocab.stoi['<pad>']))
+            self.vocab.stoi['<pad>']))  # (91,20)
+        
+        # 保存单词的隐状态
         hiddens = [Variable(encoding[0].data.new(B, T, H).zero_())
-                   for l in range(len(self.layers) + 1)]
-        embedW = self.out.weight * math.sqrt(self.d_model)
+                   for l in range(len(self.layers) + 1)]  # [(91,20,1024),(91,20,1024),(91,20,1024)]
+        embedW = self.out.weight * math.sqrt(self.d_model)  # (24,1024)
         hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])
+        
+        # 逐个时间步生成单词
         for t in range(T):
             if t == 0:
                 hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(Variable(
@@ -238,7 +244,7 @@ class Decoder(nn.Module):
                                                                 embedW)
             hiddens[0][:, t] = self.dropout(hiddens[0][:, t])
             for l in range(len(self.layers)):
-                x = hiddens[l][:, :t + 1]
+                x = hiddens[l][:, :t + 1]  # x随着t的增加不断增加  (91,1,1024)
                 x = self.layers[l].selfattn(hiddens[l][:, t], x, x)
                 hiddens[l + 1][:, t] = self.layers[l].feedforward(
                     self.layers[l].attention(x, encoding[l], encoding[l]))
@@ -376,9 +382,12 @@ class RealTransformer(nn.Module):
 
         return logits, targets
 
-    # 预测句子
+    # 预测句子,
+    #x:提议对应的特征 (91,480,1024)
+    #x_mask: 提议对应的窗口mask (91,480,1)
+    #T：20
     def greedy(self, x, x_mask, T):
-        encoding = self.encoder(x, x_mask)
+        encoding = self.encoder(x, x_mask)  # 先让提议特征进行编码，encoding的结果包含两层的结果
 
         _, pred = self.decoder.greedy(encoding, T)
         sent_lst = []
