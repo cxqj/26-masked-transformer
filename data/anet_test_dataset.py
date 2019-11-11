@@ -29,7 +29,7 @@ class ANetTestDataset(Dataset):
             annotations = val['annotations']
             if val['subset'] == self.split and os.path.isfile(os.path.join(split_path, vid+'_bn.npy')):
                 video_prefix = os.path.join(split_path, vid)
-                self.sample_list.append(video_prefix)
+                self.sample_list.append(video_prefix)   # 测试时sample_list直接就是一个视频
                 for ind, ann in enumerate(annotations):
                     ann['sentence'] = ann['sentence'].strip()
                     test_sentences.append(ann['sentence'])
