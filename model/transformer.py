@@ -233,27 +233,27 @@ class Decoder(nn.Module):
         # change T to 20, max # of words in a sentence
         # T = 40
         # T *= 2
+        # self.vocab.itos : [<unk>,<pad>,<init>,<eos>,'.','the',.......]
+        # self.vocab.stio : [<unk>:0,<pad>:1,<init>:2,<eos>:3,......]
         prediction = Variable(encoding[0].data.new(B, T).long().fill_(
             self.vocab.stoi['<pad>']))  # (91,20)
         
-        # 初始hiddens全为0，加一层是因为需要初始化单词的隐状态
+        # hiddens[0] 记录初始隐状态
         hiddens = [Variable(encoding[0].data.new(B, T, H).zero_())
-                   for l in range(len(self.layers) + 1)]  # [(91,20,1024),(91,20,1024),(91,20,1024)]
-        embedW = self.out.weight * math.sqrt(self.d_model)  # (24,1024)
+                   for l in range(len(self.layers) + 1)]  
+        embedW = self.out.weight * math.sqrt(self.d_model)  # 词嵌入矩阵 (v,d)
         
-        # hiddens[0] 记录词嵌入的结果
+        
         hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])  # (91,20,1024)
         
-        # 逐个时间步生成单词
-        for t in range(T):
-            # 当t=0时拿提议特征初始化隐状态
+
+        for t in range(T):  
             if t == 0:
                 hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(Variable(
                     encoding[0].data.new(B).long().fill_(
-                        self.vocab.stoi['<init>'])), embedW)
+                        self.vocab.stoi['<init>'])), embedW)  # 位置编码+单词词嵌入
             else:
-             # 当t!=0 时 
-                hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(prediction[:, t - 1],        # embedding用在网络的开始层将你的输入转换成向量
+                hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(prediction[:, t - 1],     
                                                                 embedW)
             hiddens[0][:, t] = self.dropout(hiddens[0][:, t])
             
@@ -401,7 +401,7 @@ class RealTransformer(nn.Module):
     #x_mask: 提议对应的窗口mask (91,480,1)
     #T：20
     def greedy(self, x, x_mask, T):
-        encoding = self.encoder(x, x_mask)  # 先让提议特征进行编码，encoding的结果包含两层的结果
+        encoding = self.encoder(x, x_mask)  
 
         _, pred = self.decoder.greedy(encoding, T)
         sent_lst = []
