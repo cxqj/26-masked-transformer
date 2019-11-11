@@ -43,11 +43,11 @@ def positional_encodings_like(x, t=None): # (5,480,1024)
     if x.is_cuda:
         encodings = encodings.cuda(x.get_device())
 
-
+    # 相当于将位置信息融入到了通道中
     for channel in range(x.size(-1)):
         if channel % 2 == 0:
             encodings[:, channel] = torch.sin(
-                positions / 10000 ** (channel / x.size(2)))  
+                positions / 10000 ** (channel / x.size(2)))    # 
         else:
             encodings[:, channel] = torch.cos(
                 positions / 10000 ** ((channel - 1) / x.size(2)))
@@ -91,7 +91,7 @@ class ResidualBlock(nn.Module):
         self.layernorm = LayerNorm(d_model)
 
     def forward(self, *x):  # *x = (q,k,v)
-        return self.layernorm(x[0] + self.dropout(self.layer(*x)))  # x[0] : q 
+        return self.layernorm(x[0] + self.dropout(self.layer(*x)))  # self.layer:multi_head
 
 class Attention(nn.Module):
 
@@ -103,11 +103,13 @@ class Attention(nn.Module):
 
     def forward(self, query, key, value):  # (5,480,128)
         dot_products = matmul(query, key.transpose(1, 2))  # (5,480,128) x (5,128,480) = (5,480,480) / (5,19,128)x(5,128,19)=(5,19,19)
+      
+        # 为什么在计算单词间的attention时需要创建上三角矩阵
         if query.dim() == 3 and (self is None or self.causal):
             tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵  (19,19)
             if key.is_cuda:
                 tri = tri.cuda(key.get_device())
-            dot_products.data.sub_(tri.unsqueeze(0))  # 没太看懂
+            dot_products.data.sub_(tri.unsqueeze(0))  
         
         return matmul(self.dropout(F.softmax(dot_products / self.scale, dim=-1)), value) # (5,480,480)x(5,480,128)=(5,480,128) / (5,19,128)
 
@@ -116,7 +118,7 @@ class MultiHead(nn.Module):
     def __init__(self, d_key, d_value, n_heads, drop_ratio, causal=False):
         super().__init__()
         self.attention = Attention(d_key, drop_ratio, causal=causal)
-        # Q,K,V矩阵
+        # q,k,v matrix
         self.wq = nn.Linear(d_key, d_key, bias=False)
         self.wk = nn.Linear(d_key, d_key, bias=False)
         self.wv = nn.Linear(d_value, d_value, bias=False)
@@ -133,7 +135,7 @@ class MultiHead(nn.Module):
             x.chunk(self.n_heads, -1) for x in (query, key, value))
         
         return self.wo(torch.cat([self.attention(q, k, v)
-                          for q, k, v in zip(query, key, value)], -1))  # [(5,480,128),(5,480,128),...(5,480,128)]-->(5,480,1024)-->(5,480,1024) / (5,19,1024)
+                          for q, k, v in zip(query, key, value)], -1))  # (5,480,128) x 8(heads)-->(5,480,1024) / (5,19,1024)
 
 class FeedForward(nn.Module):
 
@@ -172,10 +174,10 @@ class DecoderLayer(nn.Module):
         self.feedforward = ResidualBlock(FeedForward(d_model, d_hidden),
                                          d_model, drop_ratio)
 
-    def forward(self, x, encoding):  # (5,19,1024) (5,480,1024)
+    def forward(self, x, encoding):  # x:(5,19,1024)  encoding: (5,480,1024)
         # 先计算单词与单词间的attention再计算单词与提议特征间的attention
-        x = self.selfattn(x, x, x)
-        return self.feedforward(self.attention(x, encoding, encoding))  
+        x = self.selfattn(x, x, x)  # word self_atten  (5,19,1024)
+        return self.feedforward(self.attention(x, encoding, encoding))  # cross module atten  (5,19,1024)
 
 class Encoder(nn.Module):
 
@@ -200,7 +202,7 @@ class Encoder(nn.Module):
             if mask is not None:
                 x = x*mask
             encoding.append(x)
-        return encoding
+        return encoding  # 返回两层的编码结果
 
 class Decoder(nn.Module):
 
@@ -213,11 +215,11 @@ class Decoder(nn.Module):
         self.out = nn.Linear(d_model, len(vocab))   # 1024-->24
         self.dropout = nn.Dropout(drop_ratio)
         self.d_model = d_model
-        self.vocab = vocab   # 
+        self.vocab = vocab   # 词典对象
         self.d_out = len(vocab)
 
-    def forward(self, x, encoding):
-        x = F.embedding(x, self.out.weight * math.sqrt(self.d_model))
+    def forward(self, x, encoding):  # x : sent(5,19)  encoding : 编码的提议特征(5,480,1024)
+        x = F.embedding(x, self.out.weight * math.sqrt(self.d_model))  # 词嵌入矩阵 # (5,19)-->(5,19,1024)
         x = x+positional_encodings_like(x)
         x = self.dropout(x)
         # layers = 2 
@@ -344,7 +346,7 @@ class Transformer(nn.Module):
 
 
 class RealTransformer(nn.Module):
-    # vocab_trg = vocab
+    # vocab_trg ： 词典对象
     def __init__(self, d_model, encoder, vocab_trg, d_hidden=2048,
                  n_layers=6, n_heads=8, drop_ratio=0.1):
         super().__init__()
@@ -361,7 +363,7 @@ class RealTransformer(nn.Module):
             ' <eos>', '').replace(' <pad>', '').replace(' .', '').replace('  ', '')
  
     def forward(self, x, s, x_mask=None, sample_prob=0):  # x:(5,480,1024) s:(5,20) x_mask:(5,480,1)
-        encoding = self.encoder(x, x_mask)  # 提议特征编码
+        encoding = self.encoder(x, x_mask)  # 提议特征编码，与生成window_mask不同，这里只对window_mask内的特征编码
 
         max_sent_len = 20
         if not self.training:
@@ -375,8 +377,8 @@ class RealTransformer(nn.Module):
             logits = self.decoder.out(h)
         else:
             if sample_prob == 0:
-                h = self.decoder(s[:, :-1].contiguous(), encoding)   #  s[:,1:] : (5,19)   h:(5,19,1024) 
-                targets, h = mask(s[:, 1:].contiguous(), h)   # targets:(63) h:(63,1024) 获取所有单词及其对应的特征
+                h = self.decoder(s[:, :-1].contiguous(), encoding)   # s:(5,19) e:(5,480,1024)-->(5,19,1024)
+                targets, h = mask(s[:, 1:].contiguous(), h)   # targets:(63) h:(63,1024) 
                 logits = self.decoder.out(h) # (63,24)  获取每个单词属于字典中某个单词的概率
             else:
                 model_pred = self.decoder.sampling(encoding, s,
