@@ -386,7 +386,7 @@ class ActionPropDenseCap(nn.Module):
 
         # B x T x C -> B x C x T
         # for 1d conv
-        vis_feat = vis_feat.transpose(1,2).contiguous()
+        vis_feat = vis_feat.transpose(1,2).contiguous()  # (1,1024,480)
 
         prop_lst = []
         for i, kernel in enumerate(self.prop_out):
@@ -412,7 +412,8 @@ class ActionPropDenseCap(nn.Module):
                     self.kernel_list[i]))
                 break
 
-        prop_all = torch.cat(prop_lst, 2)
+        # (pred_score,overlap_score,len_off,cen_off,anc_len,anc_cen)
+        prop_all = torch.cat(prop_lst, 2)  # (1,6,6338)
 
         # assume 1st and 2nd are action prediction and overlap, respectively
         prop_all[:,:2,:] = F.sigmoid(prop_all[:,:2,:])
@@ -421,7 +422,7 @@ class ActionPropDenseCap(nn.Module):
         pred_len = prop_all[:, 4, :] * torch.exp(prop_all[:, 2, :])
         pred_cen = prop_all[:, 5, :] + prop_all[:, 4, :] * prop_all[:, 3, :]
 
-        nms_thresh_set = np.arange(0.9, 0.95, 0.05).tolist()
+        nms_thresh_set = np.arange(0.9, 0.95, 0.05).tolist() # 0.9
         all_proposal_results = []
 
         # store positional encodings, size of B x 4,
@@ -437,8 +438,8 @@ class ActionPropDenseCap(nn.Module):
         gate_scores = [] #Variable(torch.zeros(B, 1).type(dtype))
 
         for b in range(B):
-            crt_pred = prop_all.data[b]
-            crt_pred_cen = pred_cen.data[b]
+            crt_pred = prop_all.data[b]   # (6,6338)
+            crt_pred_cen = pred_cen.data[b] 
             crt_pred_len = pred_len.data[b]
             pred_masks = []
             batch_result = []
@@ -448,8 +449,8 @@ class ActionPropDenseCap(nn.Module):
             nproposal = torch.sum(torch.gt(prop_all.data[b, 0, :], pos_thresh))
             nproposal = min(max(nproposal, min_prop_num_before_nms),
                             prop_all.size(-1))
-            pred_results = np.empty((nproposal, 3))  # (窗口开始，窗口结束，得分)
-            _, sel_idx = torch.topk(crt_pred[0], nproposal)
+            pred_results = np.empty((nproposal, 3))  
+            _, sel_idx = torch.topk(crt_pred[0], nproposal)  # 选取topk个提议，sel_idx 为对应提议的索引
  
             start_t = time.time()
             for nms_thresh in nms_thresh_set:
@@ -506,6 +507,7 @@ class ActionPropDenseCap(nn.Module):
 
                             gate_scores.append(torch.Tensor([crt_pred[0, sel_idx[prop_idx]]]).type(dtype))
 
+                        # (pred_start,pred_end,fg_score)
                         pred_results[crt_nproposal] = np.array([win_start,
                                                                 win_end,
                                                                 crt_pred[0, sel_idx[prop_idx]]])
@@ -569,6 +571,7 @@ class ActionPropDenseCap(nn.Module):
                
                 # batch_x : (91,480,1024)
                 # window_mask : (91,480,1)
+                # 根据句子特征和mask生成预测句子
                 pred_sentence += self.cap_model.greedy(batch_x[batch_start:batch_end],
                                                        window_mask[batch_start:batch_end], 20)
 
@@ -578,10 +581,10 @@ class ActionPropDenseCap(nn.Module):
             )
 
             for idx in range(len(pred_results)):
-                batch_result.append((pred_results[idx][0],
-                                     pred_results[idx][1],
-                                     pred_results[idx][2],
-                                     pred_sentence[idx]))
+                batch_result.append((pred_results[idx][0],  # pred_start
+                                     pred_results[idx][1],  # pred_end
+                                     pred_results[idx][2],  # pred_score
+                                     pred_sentence[idx]))   # pred_sent
             all_proposal_results.append(tuple(batch_result))
 
             end_t = time.time()
