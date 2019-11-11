@@ -53,11 +53,11 @@ def positional_encodings_like(x, t=None): # (5,480,1024)
                 positions / 10000 ** ((channel - 1) / x.size(2)))
     return Variable(encodings)  # (480,1024)
 
-# targets：对应的真实语句的标注(2,19)
-# out : (2,19,1024)
+# targets：对应的真实语句的标注(5,19)
+# out : (5,19,1024)
 def mask(targets, out):
     mask = (targets != 1)   
-    out_mask = mask.unsqueeze(-1).expand_as(out)  # （2,19,1024）
+    out_mask = mask.unsqueeze(-1).expand_as(out)  # (5,19)-->(5,19,1024)
     return targets[mask], out[out_mask].view(-1, out.size(-1))
 
 # torch.matmul can't do (4, 3, 2) @ (4, 2) -> (4, 3)
@@ -81,6 +81,7 @@ class LayerNorm(nn.Module):
         std = x.std(-1, keepdim=True)
         return self.gamma * (x - mean) / (std + self.eps) + self.beta
 
+# layernorm(residual)     
 class ResidualBlock(nn.Module):
 
     def __init__(self, layer, d_model, drop_ratio):
@@ -90,8 +91,7 @@ class ResidualBlock(nn.Module):
         self.layernorm = LayerNorm(d_model)
 
     def forward(self, *x):  # *x = (q,k,v)
-        return self.layernorm(x[0] + self.dropout(self.layer(*x)))  # (5,480,1024) + (5,480,1024)
-
+        return self.layernorm(x[0] + self.dropout(self.layer(*x)))  # x[0] : q 
 
 class Attention(nn.Module):
 
@@ -102,14 +102,14 @@ class Attention(nn.Module):
         self.causal = causal
 
     def forward(self, query, key, value):  # (5,480,128)
-        dot_products = matmul(query, key.transpose(1, 2))  # (5,480,128) x (5,128,480) = (5,480,480)
+        dot_products = matmul(query, key.transpose(1, 2))  # (5,480,128) x (5,128,480) = (5,480,480) / (5,19,128)x(5,128,19)=(5,19,19)
         if query.dim() == 3 and (self is None or self.causal):
-            tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵
+            tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵  (19,19)
             if key.is_cuda:
                 tri = tri.cuda(key.get_device())
-            dot_products.data.sub_(tri.unsqueeze(0))
-        # 可以理解注意力机制就是对不同时间点的特征图加权求和
-        return matmul(self.dropout(F.softmax(dot_products / self.scale, dim=-1)), value) # (5,480,480)x(5,480,128)=(5,480,128)
+            dot_products.data.sub_(tri.unsqueeze(0))  # 没太看懂
+        
+        return matmul(self.dropout(F.softmax(dot_products / self.scale, dim=-1)), value) # (5,480,480)x(5,480,128)=(5,480,128) / (5,19,128)
 
 class MultiHead(nn.Module):
 
@@ -133,7 +133,7 @@ class MultiHead(nn.Module):
             x.chunk(self.n_heads, -1) for x in (query, key, value))
         
         return self.wo(torch.cat([self.attention(q, k, v)
-                          for q, k, v in zip(query, key, value)], -1))  # [(5,480,128),(5,480,128),...(5,480,128)]-->(5,480,1024)-->(5,480,1024)
+                          for q, k, v in zip(query, key, value)], -1))  # [(5,480,128),(5,480,128),...(5,480,128)]-->(5,480,1024)-->(5,480,1024) / (5,19,1024)
 
 class FeedForward(nn.Module):
 
@@ -164,17 +164,17 @@ class DecoderLayer(nn.Module):
     def __init__(self, d_model, d_hidden, n_heads, drop_ratio):
         super().__init__()
         self.selfattn = ResidualBlock(
-            MultiHead(d_model, d_model, n_heads, drop_ratio, causal=True),   # 因为在解码的过程中不希望得到未来的信息，因此需要通过创建一个上三角矩阵
+            MultiHead(d_model, d_model, n_heads, drop_ratio, causal=True),   # causal = True 创建一个上三角矩阵
             d_model, drop_ratio)
         self.attention = ResidualBlock(
-            MultiHead(d_model, d_model, n_heads, drop_ratio),   # 在解码器中相比于编码器多了一个编码器与解码器间的注意力机制
+            MultiHead(d_model, d_model, n_heads, drop_ratio),   
             d_model, drop_ratio)
         self.feedforward = ResidualBlock(FeedForward(d_model, d_hidden),
                                          d_model, drop_ratio)
 
-    def forward(self, x, encoding):
+    def forward(self, x, encoding):  # (5,19,1024) (5,480,1024)
         x = self.selfattn(x, x, x)
-        return self.feedforward(self.attention(x, encoding, encoding))
+        return self.feedforward(self.attention(x, encoding, encoding))  
 
 class Encoder(nn.Module):
 
@@ -219,9 +219,11 @@ class Decoder(nn.Module):
         x = F.embedding(x, self.out.weight * math.sqrt(self.d_model))
         x = x+positional_encodings_like(x)
         x = self.dropout(x)
+        # layers = 2 
+        # encoding = [(5,480,1024),(5,480,1024)]
         for layer, enc in zip(self.layers, encoding):
             x = layer(x, enc)
-        return x
+        return x  # (5,19,1024)
 
     def greedy(self, encoding, T):
         B, _, H = encoding[0].size()  # (91,480,1024)
@@ -349,13 +351,9 @@ class RealTransformer(nn.Module):
     def denum(self, data):
         return ' '.join(self.decoder.vocab.itos[i] for i in data).replace(
             ' <eos>', '').replace(' <pad>', '').replace(' .', '').replace('  ', '')
-
-    # x ： 视觉特征
-    # s ： sentence
-    # x_mask: 得到的提议对应的窗口mask
-    def forward(self, x, s, x_mask=None, sample_prob=0):
-        # 在解码时先要经过一次编码
-        encoding = self.encoder(x, x_mask)
+ 
+    def forward(self, x, s, x_mask=None, sample_prob=0):  # x:(5,480,1024) s:(5,20) x_mask:(5,480,1)
+        encoding = self.encoder(x, x_mask)  # 提议特征编码
 
         max_sent_len = 20
         if not self.training:
@@ -364,14 +362,14 @@ class RealTransformer(nn.Module):
                 h = hiddens[-1]
                 targets = None
             else:
-                h = self.decoder(s[:, :-1].contiguous(), encoding)
+                h = self.decoder(s[:, :-1].contiguous(), encoding)  
                 targets, h = mask(s[:, 1:].contiguous(), h)
             logits = self.decoder.out(h)
         else:
             if sample_prob == 0:
-                h = self.decoder(s[:, :-1].contiguous(), encoding)   # 得到语句特征和对应提议视觉特征融合后的特征
-                targets, h = mask(s[:, 1:].contiguous(), h)  # targets:目标语句(21)  h:对应的特征(21,1024)  
-                logits = self.decoder.out(h) # (21,24)
+                h = self.decoder(s[:, :-1].contiguous(), encoding)   #  s[:,1:] : (5,19)   h:(5,19,1024) 
+                targets, h = mask(s[:, 1:].contiguous(), h)   # targets:(63) h:(63,1024) 获取所有单词及其对应的特征
+                logits = self.decoder.out(h) # (63,24)  获取每个单词属于字典中某个单词的概率
             else:
                 model_pred = self.decoder.sampling(encoding, s,
                                                    s.size(1) - 2,
@@ -386,7 +384,7 @@ class RealTransformer(nn.Module):
                 targets, h = mask(s[:, 1:].contiguous(), h)
                 logits = self.decoder.out(h)
 
-        return logits, targets
+        return logits, targets  # (63,24) / (63)
 
     # 预测句子,
     #x:提议对应的特征 (91,480,1024)
