@@ -103,8 +103,10 @@ def get_vocab_and_sentences(dataset_file, max_length=20):
                 nsentence[split] += 1
 
     # sentences_proc = list(map(text_proc.preprocess, train_sentences)) # build vocab on train only
-    sentences_proc = list(map(text_proc.preprocess, train_val_sentences)) # 分成
-    text_proc.build_vocab(sentences_proc, min_freq=5)  # 构建字典，并建立单词的索引
+    
+    # 分词并创建字典
+    sentences_proc = list(map(text_proc.preprocess, train_val_sentences)) 
+    text_proc.build_vocab(sentences_proc, min_freq=5)  
     print('# of words in the vocab: {}'.format(len(text_proc.vocab)))
     print(
         '# of sentences in training: {}, # of sentences in validation: {}'.format(
@@ -142,7 +144,7 @@ class ANetDataset(Dataset):
         if not load_samplelist:
             self.sample_list = []  # list of list for data samples
 
-            # 获取训练语句
+            #-------------------------------------处理训练语句，添加对应的索引化后的语句------------------------------------#
             train_sentences = []
             for vid, val in raw_data.items():
                 annotations = val['annotations']
@@ -152,6 +154,7 @@ class ANetDataset(Dataset):
                             ann['sentence'] = ann['sentence'].strip()
                             train_sentences.append(ann['sentence'])
 
+            # 分词并索引化
             train_sentences = list(map(text_proc.preprocess, train_sentences))  
             
             # transfor correspond sentens to vocab index and padding it to max_len
@@ -170,9 +173,9 @@ class ANetDataset(Dataset):
                             idx += 1
 
             print('size of the sentence block variable ({}): {}'.format(
-                split, sentence_idx.size()))  # [总的训练语句数，20]
+                split, sentence_idx.size()))  
 
-            # all the anchors  提前预设出来一系列不同中心点和尺度的anchor
+            # ------------------------------预设出一系列的提议的len和cen---------------------------------#
             anc_len_lst = []
             anc_cen_lst = []
             for i in range(0, len(kernel_list)):
@@ -186,10 +189,10 @@ class ANetDataset(Dataset):
                 anc_len_lst.append(anc_len)
                 anc_cen_lst.append(anc_cen)
                 
-            anc_len_all = np.hstack(anc_len_lst)
-            anc_cen_all = np.hstack(anc_cen_lst)
+            anc_len_all = np.hstack(anc_len_lst)  # (6338)
+            anc_cen_all = np.hstack(anc_cen_lst)  # (6338)
 
-            # 之所以要运行这一步是因为作者在抽取特征的是间隔抽帧的
+            # -------------------------------不是很明白这一步---------------------------------------#
             frame_to_second = {}
             sampling_sec = 0.5 # hard coded, only support 0.5
             with open(dur_file) as f:
@@ -212,6 +215,8 @@ class ANetDataset(Dataset):
             
             # load annotation per video and construct training set
             missing_prop = 0
+            
+            # 多进程有问题！！
             with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
                 results = [None]*len(raw_data)
                 vid_idx = 0
@@ -235,18 +240,19 @@ class ANetDataset(Dataset):
                     results[i] = r.get()
 
             vid_counter = 0
-            for r in results:
+            for r in results:  # r : one_video result
                 if r is not None:
                     vid_counter += 1
                     video_prefix, total_frame, pos_seg, neg_seg, is_missing = r
                     missing_prop += is_missing
                     npos_seg = 0
-                    for k in pos_seg:
+                    for k in pos_seg:  # k is pos_seg idx
                         # all neg_segs are the same, since they need to be negative
                         # for all samples
                         all_segs = pos_seg[k] 
                         sent = all_segs[0][-1]   # sent
                         other = [s[:-1] for s in all_segs]  # (j,overlap,len_off,cen_off)
+                        # sample_list中的一个元素对应一个gt_segments,一个gt_segments对应多个正负提议
                         self.sample_list.append(
                             (video_prefix, other, sent, neg_seg, total_frame))
                         npos_seg += len(pos_seg[k])
@@ -254,11 +260,11 @@ class ANetDataset(Dataset):
                     pos_anchor_stats.append(npos_seg)
                     neg_anchor_stats.append(len(neg_seg))
 
-            print('total number of {} videos: {}'.format(split, vid_counter))
+            print('total number of {} videos: {}'.format(split, vid_counter))   # 10007
             print('total number of {} samples (unique segments): {}'.format(
-                split, len(self.sample_list)))
-            print('total number of annotations: {}'.format(len(train_sentences)))
-            print('total number of missing annotations: {}'.format(missing_prop))
+                split, len(self.sample_list)))  # 36015
+            print('total number of annotations: {}'.format(len(train_sentences))) # 37415
+            print('total number of missing annotations: {}'.format(missing_prop)) # 1400
             print('avg pos anc: {:.2f} avg neg anc: {:.2f}'.format(
                 np.mean(pos_anchor_stats), np.mean(neg_anchor_stats)
             ))
@@ -275,12 +281,12 @@ class ANetDataset(Dataset):
 
     # 在加载数据的时候先调用这个函数获得batch_size中的每一个数据
     def __getitem__(self, index):
-        video_prefix, pos_seg, sentence, neg_seg, total_frame = self.sample_list[index]  # 每一个正样本对应列表的一个元素
+        video_prefix, pos_seg, sentence, neg_seg, total_frame = self.sample_list[index]  
         resnet_feat = torch.from_numpy(
-            np.load(video_prefix + '_resnet.npy')).float()
-        bn_feat = torch.from_numpy(np.load(video_prefix + '_bn.npy')).float()
+            np.load(video_prefix + '_resnet.npy')).float()  # (365,2048)
+        bn_feat = torch.from_numpy(np.load(video_prefix + '_bn.npy')).float() # (365,1024)
         img_feat = torch.FloatTensor(np.zeros((self.slide_window_size,
-                                     resnet_feat.size(1)+bn_feat.size(1))))
+                                     resnet_feat.size(1)+bn_feat.size(1))))   # (480,3072)
         torch.cat((resnet_feat, bn_feat), dim=1,
                   out=img_feat[:min(total_frame, self.slide_window_size)])
 
@@ -318,24 +324,23 @@ def _get_pos_neg(split_path, annotations, vid,
           
         total_frame = bn_feat.size(0)  # T
 
+        # 不是很懂代码里的sample_sec这一系列操作
         window_start = 0
         window_end = slide_window_size
         window_start_t = window_start * sampling_sec 
         window_end_t = window_end * sampling_sec
         
         # 获取正样本
-        # pos_seg 以字典的形式存放
-        # 其中字典的键是annotation中Gt的索引，值是对应的提议anchor的信息
         pos_seg = defaultdict(list)  # 解决了dict中不存在默认值的问题,如果不存在键，默认为list
         neg_overlap = [0] * anc_len_all.shape[0]  # 6338
-        pos_collected = [False] * anc_len_all.shape[0]   
+        pos_collected = [False] * anc_len_all.shape[0]  # 6338  
         
         # 遍历所有预设的anchor
         for j in range(anc_len_all.shape[0]):
             potential_match = []
             for ann_idx, ann in enumerate(annotations):
                 seg = ann['segment']
-                # 为什么要进行这一步？？
+                # ??
                 gt_start = seg[0] / sampling_sec
                 gt_end = seg[1] / sampling_sec
                 if gt_start > gt_end:
@@ -379,7 +384,7 @@ def _get_pos_neg(split_path, annotations, vid,
                 item = potential_match[0]
                 pos_seg[item[0]].append(tuple(item[1:]))
 
-        # 有些视频的标注没有任何匹配的annotations
+        # 有些视频的gt segments没有任何匹配的预设anchor
         missing_prop = 0
         if len(pos_seg.keys()) != len(annotations):
             print('Some annotations in video {} does not have '
@@ -399,7 +404,7 @@ def _get_pos_neg(split_path, annotations, vid,
             'pos anc: {}, neg anc: {}'.format(npos_seg,
                                               len(neg_seg)))
 
-        return video_prefix, total_frame, pos_seg, neg_seg, missing_prop
+        return video_prefix, total_frame, pos_seg, neg_seg, missing_prop  
     else:
         return None
 
@@ -427,7 +432,7 @@ def anet_collate_fn(batch_lst):
         sentence_batch[batch_idx] = sentence.data
 
         # sample positive anchors
-        perm_idx = torch.randperm(len(pos_seg))  # 随机打乱正样本的索引
+        perm_idx = torch.randperm(len(pos_seg))  # random select
         if len(pos_seg) >= sample_each:
             tempo_seg_pos[batch_idx,:,:] = pos_seg_tensor[perm_idx[:sample_each]]
         else:
