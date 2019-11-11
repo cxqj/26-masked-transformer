@@ -37,11 +37,12 @@ parser = argparse.ArgumentParser()
 # Data input settings
 parser.add_argument('--cfgs_file', default='cfgs/anet.yml', type=str, help='dataset specific settings. anet | yc2')
 parser.add_argument('--dataset', default='', type=str, help='which dataset to use. two options: anet | yc2')
-parser.add_argument('--dataset_file', default='', type=str)  # 训练和验证集在一个文件中
+parser.add_argument('--dataset_file', default='', type=str)  
 parser.add_argument('--feature_root', default='', type=str, help='the feature root')
 parser.add_argument('--dur_file', default='', type=str)
 parser.add_argument('--train_data_folder', default=['training'], type=str, nargs='+', help='training data folder')
 parser.add_argument('--val_data_folder', default=['validation'], help='validation data folder')
+# 保存samplelist
 parser.add_argument('--save_train_samplelist', action='store_true')  
 parser.add_argument('--load_train_samplelist', action='store_true')
 parser.add_argument('--train_samplelist_path', type=str, default='/z/home/luozhou/subsystem/densecap_vid/train_samplelist.pkl')
@@ -200,12 +201,12 @@ def get_dataset(args):
 
 
 def get_model(text_proc, args):
-    sent_vocab = text_proc.vocab  # 字典对象
+    sent_vocab = text_proc.vocab  # 字典对象  (text_proc.vocab.itos)
     model = ActionPropDenseCap(d_model=args.d_model,
                                d_hidden=args.d_hidden,
                                n_layers=args.n_layers,
                                n_heads=args.n_heads,
-                               vocab=sent_vocab,
+                               vocab=sent_vocab,  # 传入的是字典对象
                                in_emb_dropout=args.in_emb_dropout, # 0.1
                                attn_dropout=args.attn_dropout,     # 0.2
                                vis_emb_dropout=args.vis_emb_dropout, # 0.1
@@ -286,7 +287,7 @@ def main(args):
     else:
         vis, vis_window = None, None
 
-    # 验证loss
+    # 验证loss保存结果时看的是
     all_eval_losses = [] 
     all_cls_losses = []
     all_reg_losses = []
@@ -408,10 +409,11 @@ def main(args):
 def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
     model.train() # training mode
     train_loss = []
-    nbatches = len(train_loader)
+    nbatches = len(train_loader)  # batch_size
     t_iter_start = time.time()
 
-    sample_prob = min(args.sample_prob, int(epoch/5)*0.05)  # 0 probability for use model samples during training
+    sample_prob = min(args.sample_prob, int(epoch/5)*0.05)  #probability for use model samples during training
+    
     for train_iter, data in enumerate(train_loader):
         (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch) = data
         img_batch = Variable(img_batch)   # (5,480,3072)
@@ -436,8 +438,8 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
                                        gated_mask=args.gated_mask)
 
         cls_loss = model.module.bce_loss(pred_score, gt_score) * args.cls_weight  # 1.0
-        reg_loss = model.module.reg_loss(pred_offsets, gt_offsets) * args.reg_weight 
-        sent_loss = F.cross_entropy(pred_sentence, gt_sent) * args.sent_weight
+        reg_loss = model.module.reg_loss(pred_offsets, gt_offsets) * args.reg_weight  # 10.0
+        sent_loss = F.cross_entropy(pred_sentence, gt_sent) * args.sent_weight  # 0.25
 
         total_loss = cls_loss + reg_loss + sent_loss
 
@@ -446,7 +448,7 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
             total_loss += scst_loss
 
         if mask_loss is not None:
-            mask_loss = args.mask_weight * mask_loss # 0.0
+            mask_loss = args.mask_weight * mask_loss # mask_weight : 1.0
             total_loss += mask_loss
         else:
             mask_loss = cls_loss.new(1).fill_(0)
