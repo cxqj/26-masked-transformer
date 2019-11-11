@@ -369,7 +369,7 @@ class ActionPropDenseCap(nn.Module):
 
         x = self.emb_out(x)
 
-        
+        #-------------------------------------------生成window_mask------------------------------------------#
         vis_feat, all_emb = self.vis_emb(x)
         # vis_feat = self.vis_dropout(vis_feat)
 
@@ -454,11 +454,13 @@ class ActionPropDenseCap(nn.Module):
                     if pred_end >= original_frame_len or pred_start < 0:
                         continue
 
+                    
                     hasoverlap = False
                     if crt_nproposal > 0:
                         if np.max(segment_iou(np.array([pred_start, pred_end]), pred_results[:crt_nproposal])) > nms_thresh:
                             hasoverlap = True
 
+                    # if haoverlap < nms_thresh则认为没有和这个预测anchor重叠度大于阈值的anchor
                     if not hasoverlap:
                         pred_bin_window_mask = torch.zeros(1, T, 1).type(dtype)  # (1,480,1)
                         win_start = math.floor(max(min(pred_start, min(original_frame_len, T)-1), 0))
@@ -536,7 +538,7 @@ class ActionPropDenseCap(nn.Module):
                                           pos_encs[npos//4 * 2:npos//4 * 3],
                                           pos_encs[npos//4 * 3:npos//4 * 4],
                                           anchor_window_mask), 1)  # (91,1504)
-                pred_cont_masks  = self.mask_model(in_pred_mask).unsqueeze(2)
+                pred_cont_masks  = self.mask_model(in_pred_mask).unsqueeze(2)  # (91,480,1)
 
                 if gated_mask:
                     gate_scores = Variable(torch.cat(gate_scores, 0).view(-1,1,1))
@@ -550,6 +552,8 @@ class ActionPropDenseCap(nn.Module):
 
             mid2_t = time.time()
 
+            #----------------------------------------------------------------------------------------------------#
+            
             pred_sentence = []
             # use cap_batch as caption batch size
             cap_batch = math.ceil(480*256/T)  # 256
@@ -560,7 +564,6 @@ class ActionPropDenseCap(nn.Module):
                
                 # batch_x : (91,480,1024)
                 # window_mask : (91,480,1)
-                # 根据句子特征和mask生成预测句子
                 pred_sentence += self.cap_model.greedy(batch_x[batch_start:batch_end],
                                                        window_mask[batch_start:batch_end], 20)
 
