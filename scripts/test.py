@@ -176,7 +176,7 @@ def validate(model, loader, args):
                 print("cannot find frame_to_second for video {}".format(video_prefix[0].split('/')[-1]))
             sampling_sec = frame_to_second[video_prefix[0].split('/')[-1]] # batch_size has to be 1
             
-            # 测试时调用的是推理函数
+            # 测试时调用inference
             all_proposal_results = model.inference(image_feat,
                                                    original_num_frame,
                                                    sampling_sec,
