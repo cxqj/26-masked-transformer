@@ -166,6 +166,8 @@ class ActionPropDenseCap(nn.Module):
 
         x = self.emb_out(x)  # DropoutTime1D
 
+        #-------------------------------------------------生成window-mask-----------------------------------------------#
+        
         # 这一步对输入的图片进行编码，vis_feat为编码器最后一层的输出结果，all_emb为所有层的输出
         # vis_feat : (5,480,1024)
         # all_emb : [(5,480,1024),(5,480,1024)]
@@ -254,17 +256,17 @@ class ActionPropDenseCap(nn.Module):
             # 获取batch_size每一个正样本的预测结果，并随机选取一个正样本来cpation
             for i in range(sample_each):
                 # sample pos anchors
-                pos_sam = pos_anchor[i].data  # anchor索引，重叠度，len_off,cen_off
+                pos_sam = pos_anchor[i].data   # (pos_idx,overlap,len_off,cen_off)
                 pos_sam_ind = int(pos_sam[0])
 
-                pred_score[b*sample_each+i, 0] = prop_all[b, 0, pos_sam_ind]
+                pred_score[b*sample_each+i, 0] = prop_all[b, 0, pos_sam_ind]  # prop_all : (5,6,6338)
                 gt_score[b*sample_each+i, 0] = 1
 
                 pred_offsets[b*sample_each+i] = prop_all[b, 2:4, pos_sam_ind]
                 gt_offsets[b*sample_each+i] = pos_sam[2:]
 
                 # sample neg anchors
-                neg_sam = neg_anchor[i].data  # anchor索引，重叠度
+                neg_sam = neg_anchor[i].data  # (neg_idx,overlap)
                 neg_sam_ind = int(neg_sam[0])
                 pred_score[b*sample_each+i, 1] = prop_all[b, 0, neg_sam_ind]
                 gt_score[b*sample_each+i, 1] = 0
@@ -274,7 +276,7 @@ class ActionPropDenseCap(nn.Module):
                            # TODO Is that true? Why cannot caption all?
                     # anchor length, 4, 5 are the indices for anchor length and center
                    
-                    # 随机挑选的某一个预设的正样本，可以认为这个正样本比较接近gt
+                    # 挑选出pos_sam_idx对应的预设anchor
                     anc_len = prop_all[b, 4, pos_sam_ind].data.item()
                     anc_cen = prop_all[b, 5, pos_sam_ind].data.item()
 
@@ -284,7 +286,7 @@ class ActionPropDenseCap(nn.Module):
                     # length is after taking log
                     
                     
-                    # 获取gt_window_mask
+                    #----------------------gt_window_mask------------------------#
                     gt_len = np.exp(pos_sam[2].item()) * anc_len
                     gt_cen = pos_sam[3].item() * anc_len + anc_cen
                     gt_window_mask = torch.zeros(T, 1).type(dtype)  # (480,1)
@@ -296,22 +298,22 @@ class ActionPropDenseCap(nn.Module):
                     batch_mask[b] = gt_window_mask
                    
 
-                    
+                    #-------------------------pre_bin_window_mask----------------------# 
                     crt_pred_cen = pred_cen[b, pos_sam_ind]
                     crt_pred_len = pred_len[b, pos_sam_ind]
                     pred_start_w = crt_pred_cen - crt_pred_len / 2.0
                     pred_end_w = crt_pred_cen + crt_pred_len/2.0
-
                     pred_bin_window_mask[b,
                     math.floor(max(0, min(T-1, pred_start_w.data.item()))):
                     math.ceil(max(1, min(T, pred_end_w.data.item())))] = 1.
 
                     if self.learn_mask:
+                        #-------------------anchor_window_mask-------------------#
                         anchor_window_mask[b,
                         max(0, math.floor(anc_cen - anc_len / 2.)):
                         min(T, math.ceil(anc_cen + anc_len / 2.))] = 1.
 
-                        # pe_locs : (B*4),因为每一个batch只随机选取一个样本编码，将选取的每个正样本的位置信息记录在pe_locs中
+                        # (B*4)-->(pred_start,pred_end,anc_start,anc_end)
                         pe_locs[b] = pred_start_w
                         pe_locs[B + b] = pred_end_w
                         pe_locs[B*2 + b] = Variable(torch.Tensor([max(0, math.floor(anc_cen - anc_len / 2.))]).type(dtype))
@@ -324,16 +326,15 @@ class ActionPropDenseCap(nn.Module):
             # 对选取的正样本的位置信息进行编码 (B*4,256)
             pos_encs = positional_encodings(pe_locs, self.d_model//4)  
        
-            in_pred_mask = torch.cat((pos_encs[:B], pos_encs[B:B*2],    # (2,256)+(2,256)+(2,256)+(2,256)+(2,480) = (2,1504)
+            in_pred_mask = torch.cat((pos_encs[:B], pos_encs[B:B*2],    # (5,256)+(5,256)+(5,256)+(5,256)+(5,480) = (5,1504)
                                       pos_encs[B*2:B*3], pos_encs[B*3:B*4],
                                       anchor_window_mask), 1)
             
-            pred_mask = self.mask_model(in_pred_mask).view(B, T, 1)    # (2,480,1) 预测的连续mask,可以认为这个mask比较精确，因为在生成这个mask的时候
-                                                                       # 加入了比较精确的提前设定的和gt的重叠度大于0.7的anchor
+            pred_mask = self.mask_model(in_pred_mask).view(B, T, 1)    # (5,480,1) 预测的连续mask
 
             if gated_mask:
                 gate_scores = F.sigmoid(gate_scores)
-                window_mask = (gate_scores * pred_bin_window_mask.view(B, T, 1) +  (1-gate_scores) * pred_mask)   # (2,480,1)
+                window_mask = (gate_scores * pred_bin_window_mask.view(B, T, 1) +  (1-gate_scores) * pred_mask)   # (5,480,1)
                 # window_mask = (gate_scores * batch_mask
                                 #+  (1-gate_scores) * pred_mask)
             else:
@@ -345,14 +346,20 @@ class ActionPropDenseCap(nn.Module):
             window_mask = pred_bin_window_mask.view(B, T, 1)
             # window_mask = batch_mask
 
+        #---------------------------------------------------------------------------------------------------------------------#  
+         
+        # 生成句子
+        # x：(5,480,1024)
+        # sentence : (5,20)
+        # window_mask : (5,480,1)
         pred_sentence, gt_cent= self.cap_model(x, sentence, window_mask,
-                                               sample_prob=sample_prob)
+                                               sample_prob=sample_prob)  # (63,24)/(63) 返回所有单词对应字典中每个词的概率和真实的单词(不包含pad)
 
         scst_loss = None
         if scst:
             scst_loss = self.cap_model.scst(x, batch_mask, sentence)
 
-        return (pred_score, gt_score,
+        return (pred_score, gt_score,   # (50,2)
                 pred_offsets, gt_offsets,
                 pred_sentence, gt_cent,
                 scst_loss, mask_loss)
@@ -373,6 +380,7 @@ class ActionPropDenseCap(nn.Module):
 
         x = self.emb_out(x)
 
+        
         vis_feat, all_emb = self.vis_emb(x)
         # vis_feat = self.vis_dropout(vis_feat)
 
