@@ -60,22 +60,13 @@ class DropoutTime1D(nn.Module):
 
 
 class ActionPropDenseCap(nn.Module):
-    """
-    d_model,   1024
-    d_hidden,  2048
-    n_layers,   2
-    n_heads,    8
-    vocab,      sentence
+    """  
     in_emb_dropout,  0.1
     attn_dropout,    0.2
     vis_emb_dropout,  0.1
     cap_dropout,     0.2
-    nsamples,        20（正+负）
     kernel_list,     [1, 2, 3, 4, 5, 7, 9, 11, 15, 21, 29, 41, 57, 71, 111, 161, 211, 251]
-    stride_factor,   50
-    learn_mask=False,   True
-    window_length=480
-    
+    stride_factor,   50  
     """
     def __init__(self, d_model, d_hidden, n_layers, n_heads, vocab,
                  in_emb_dropout, attn_dropout, vis_emb_dropout,
@@ -84,12 +75,12 @@ class ActionPropDenseCap(nn.Module):
         super(ActionPropDenseCap, self).__init__()
 
         self.kernel_list = kernel_list
-        self.nsamples = nsamples
+        self.nsamples = nsamples  # 20
         self.learn_mask = learn_mask
         self.d_model = d_model
 
         self.mask_model = nn.Sequential(
-            nn.Linear(d_model+window_length, d_model, bias=False),  # 加上窗口是对应着binary mask
+            nn.Linear(d_model+window_length, d_model, bias=False),  # (1024 + 480)-->480
             nn.BatchNorm1d(d_model),
             nn.ReLU(),
             nn.Linear(d_model, window_length),
@@ -104,17 +95,16 @@ class ActionPropDenseCap(nn.Module):
             nn.ReLU()
         )
 
-       # Encoder
-       # 第一个0对应的是编码器
-       # 第二个0对应的是vocab
+        # encoder
         self.vis_emb = Transformer(d_model, 0, 0,
                                    d_hidden=d_hidden,
                                    n_layers=n_layers,
                                    n_heads=n_heads,
                                    drop_ratio=attn_dropout)
 
-        self.vis_dropout = DropoutTime1D(vis_emb_dropout)
+        self.vis_dropout = DropoutTime1D(vis_emb_dropout) # 0.1
 
+       
         self.prop_out = nn.ModuleList(
             [nn.Sequential(
                 nn.BatchNorm1d(d_model),
@@ -125,7 +115,7 @@ class ActionPropDenseCap(nn.Module):
                           bias=False),
                 nn.BatchNorm1d(d_model),
                 nn.Conv1d(d_model, d_model,
-                          1, bias=False),    # 相当于全连接层做了一下非线性变换
+                          1, bias=False),   
                 nn.BatchNorm1d(d_model),
                 nn.ReLU(inplace=True),
                 nn.BatchNorm1d(d_model),
@@ -135,10 +125,10 @@ class ActionPropDenseCap(nn.Module):
                 for i in range(len(self.kernel_list))   # 18层
             ])
 
-        # Decoder
+        # decoder
         self.cap_model = RealTransformer(d_model,
                                          self.vis_emb.encoder, #share the encoder
-                                         vocab,  # 词典对象
+                                         vocab,  # 词典对象(解码时需要单词信息)
                                          d_hidden=d_hidden,
                                          n_layers=n_layers,
                                          n_heads=n_heads,
@@ -171,7 +161,7 @@ class ActionPropDenseCap(nn.Module):
         # 这一步对输入的图片进行编码，vis_feat为编码器最后一层的输出结果，all_emb为所有层的输出
         # vis_feat : (5,480,1024)
         # all_emb : [(5,480,1024),(5,480,1024)]
-        vis_feat, all_emb = self.vis_emb(x)  # 对输入图片特征编码
+        vis_feat, all_emb = self.vis_emb(x)  # 对输入图片特征编码，只是单纯的为了获取window_mask
         # vis_feat = self.vis_dropout(vis_feat)
 
         # B x T x C -> B x C x T
@@ -184,10 +174,9 @@ class ActionPropDenseCap(nn.Module):
         for i, kernel in enumerate(self.prop_out):
             kernel_size = self.kernel_list[i]
             if kernel_size <= vis_feat.size(-1):
-                # 根据编码后的特征得到的预测结果
-                pred_o = kernel(vis_feat)   # (5,4,480)
+                pred_o = kernel(vis_feat)   # (5,1024,480)-->(5,4,480)
              
-                # 预设一系列中心点，shape:(480,)
+                # 预设一系列anchor
                 anchor_c = Variable(torch.FloatTensor(np.arange(
                     float(kernel_size)/2.0,
                     float(T+1-kernel_size/2.0),
@@ -220,7 +209,7 @@ class ActionPropDenseCap(nn.Module):
         gt_offsets = Variable(torch.FloatTensor(np.zeros((sample_each*B,2))).type(dtype)) # (50,2)
 
         #---------------------------------------------生成learn mask-----------------------------------------#
-        # B x T x H
+        # B x T x 1
         batch_mask = Variable(torch.FloatTensor(np.zeros((B,T,1))).type(dtype))  # (5,480,1)
 
         # store positional encodings, size of B x 4,
@@ -228,7 +217,7 @@ class ActionPropDenseCap(nn.Module):
         # second B values are predicted ends,
         # third B values are anchor starts,
         # last B values are anchor ends
-        pe_locs = Variable(torch.zeros(B*4).type(dtype))  # [5*4]
+        pe_locs = Variable(torch.zeros(B*4).type(dtype))  # [5*4]  each batch select one pos anchor to cap this keep it's positional info
         
         anchor_window_mask = Variable(torch.zeros(B, T).type(dtype),
                                       requires_grad=False)
@@ -257,7 +246,7 @@ class ActionPropDenseCap(nn.Module):
             for i in range(sample_each):
                 # sample pos anchors
                 pos_sam = pos_anchor[i].data   # (pos_idx,overlap,len_off,cen_off)
-                pos_sam_ind = int(pos_sam[0])
+                pos_sam_ind = int(pos_sam[0])  # 对应的哪一个预设的anchor
 
                 pred_score[b*sample_each+i, 0] = prop_all[b, 0, pos_sam_ind]  # prop_all : (5,6,6338)
                 gt_score[b*sample_each+i, 0] = 1
@@ -276,7 +265,7 @@ class ActionPropDenseCap(nn.Module):
                            # TODO Is that true? Why cannot caption all?
                     # anchor length, 4, 5 are the indices for anchor length and center
                    
-                    # 挑选出pos_sam_idx对应的预设anchor
+                    # 预设的原始anchor
                     anc_len = prop_all[b, 4, pos_sam_ind].data.item()
                     anc_cen = prop_all[b, 5, pos_sam_ind].data.item()
 
