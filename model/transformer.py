@@ -173,6 +173,7 @@ class DecoderLayer(nn.Module):
                                          d_model, drop_ratio)
 
     def forward(self, x, encoding):  # (5,19,1024) (5,480,1024)
+        # 先计算单词与单词间的attention再计算单词与提议特征间的attention
         x = self.selfattn(x, x, x)
         return self.feedforward(self.attention(x, encoding, encoding))  
 
@@ -255,6 +256,10 @@ class Decoder(nn.Module):
             hiddens[0][:, t] = self.dropout(hiddens[0][:, t])
             
             for l in range(len(self.layers)):
+                """
+                Note that the self-attention layer in the decoder can only attend to the current and previous positions
+                to preserve the auto-regressive property.
+                """
                 x = hiddens[l][:, :t + 1]  
                 x = self.layers[l].selfattn(hiddens[l][:, t], x, x)   # 计算当前单词与前面所有单词的注意力
                 hiddens[l + 1][:, t] = self.layers[l].feedforward(
