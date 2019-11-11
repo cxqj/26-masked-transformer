@@ -478,3 +478,5 @@ class RealTransformer(nn.Module):
         loss = - torch.mean(torch.sum(r_diff.view(-1,1) * logp * mask, 1))
 
         return loss
+       
+       
