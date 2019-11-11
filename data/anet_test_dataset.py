@@ -23,7 +23,7 @@ class ANetTestDataset(Dataset):
 
         self.sample_list = []  # list of list for data samples
 
-        # 获取所有的验证语句
+        
         test_sentences = []
         for vid, val in raw_data.items():
             annotations = val['annotations']
@@ -33,8 +33,8 @@ class ANetTestDataset(Dataset):
                 for ind, ann in enumerate(annotations):
                     ann['sentence'] = ann['sentence'].strip()
                     test_sentences.append(ann['sentence'])
-
-        test_sentences = list(map(text_proc.preprocess, test_sentences))
+        # 分词和索引化
+        test_sentences = list(map(text_proc.preprocess, test_sentences))   
         sentence_idx = text_proc.numericalize(text_proc.pad(test_sentences),
                                                    device=-1)  # put in memory
 
@@ -77,7 +77,7 @@ def anet_test_collate_fn(batch_lst):
     img_feat, _, _ = batch_lst[0]
 
     batch_size = len(batch_lst)
-
+    # (B,T,C)
     img_batch = torch.FloatTensor(batch_size,
                                   img_feat.size(0),
                                   img_feat.size(1)).zero_()
