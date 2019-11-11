@@ -47,7 +47,7 @@ def positional_encodings_like(x, t=None): # (5,480,1024)
     for channel in range(x.size(-1)):
         if channel % 2 == 0:
             encodings[:, channel] = torch.sin(
-                positions / 10000 ** (channel / x.size(2)))   # 不太理解位置编码？？
+                positions / 10000 ** (channel / x.size(2)))  
         else:
             encodings[:, channel] = torch.cos(
                 positions / 10000 ** ((channel - 1) / x.size(2)))
@@ -230,34 +230,37 @@ class Decoder(nn.Module):
         # change T to 20, max # of words in a sentence
         # T = 40
         # T *= 2
-        
-        # 保存预测的单词结果
         prediction = Variable(encoding[0].data.new(B, T).long().fill_(
             self.vocab.stoi['<pad>']))  # (91,20)
         
-        # 保存单词的隐状态
+        # 初始hiddens全为0，加一层是因为需要初始化单词的隐状态
         hiddens = [Variable(encoding[0].data.new(B, T, H).zero_())
                    for l in range(len(self.layers) + 1)]  # [(91,20,1024),(91,20,1024),(91,20,1024)]
         embedW = self.out.weight * math.sqrt(self.d_model)  # (24,1024)
-        hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])
+        
+        # hiddens[0] 记录词嵌入的结果
+        hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])  # (91,20,1024)
         
         # 逐个时间步生成单词
         for t in range(T):
+            # 当t=0时拿提议特征初始化隐状态
             if t == 0:
                 hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(Variable(
                     encoding[0].data.new(B).long().fill_(
                         self.vocab.stoi['<init>'])), embedW)
             else:
-                hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(prediction[:, t - 1],
+             # 当t!=0 时 
+                hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(prediction[:, t - 1],        # embedding用在网络的开始层将你的输入转换成向量
                                                                 embedW)
             hiddens[0][:, t] = self.dropout(hiddens[0][:, t])
+            
             for l in range(len(self.layers)):
-                x = hiddens[l][:, :t + 1]  # x随着t的增加不断增加  (91,1,1024)
-                x = self.layers[l].selfattn(hiddens[l][:, t], x, x)
+                x = hiddens[l][:, :t + 1]  
+                x = self.layers[l].selfattn(hiddens[l][:, t], x, x)   # 计算当前单词与前面所有单词的注意力
                 hiddens[l + 1][:, t] = self.layers[l].feedforward(
-                    self.layers[l].attention(x, encoding[l], encoding[l]))
+                    self.layers[l].attention(x, encoding[l], encoding[l]))  # 计算单词与提议特征的注意力
 
-            _, prediction[:, t] = self.out(hiddens[-1][:, t]).max(-1)
+            _, prediction[:, t] = self.out(hiddens[-1][:, t]).max(-1)  # (91,20) 得到的每个单词最大概率对应字典中单词的索引
         return hiddens, prediction
 
 
