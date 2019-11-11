@@ -111,7 +111,7 @@ def get_dataset(args):
 
 
 def get_model(text_proc, args):
-    sent_vocab = text_proc.vocab
+    sent_vocab = text_proc.vocab  # 字典对象
     model = ActionPropDenseCap(d_model=args.d_model,
                                d_hidden=args.d_hidden,
                                n_layers=args.n_layers,
@@ -142,8 +142,8 @@ def get_model(text_proc, args):
 ### Validation ##
 def validate(model, loader, args):
     model.eval()
-    densecap_result = defaultdict(list)
-    prop_result = defaultdict(list)
+    densecap_result = defaultdict(list)  
+    prop_result = defaultdict(list)  
 
     avg_prop_num = 0
 
