@@ -7,7 +7,7 @@
 
 # general packages
 import os
-import errno
+import errno   # 捕获程序中的标准错误
 import argparse
 import numpy as np
 import random
@@ -21,7 +21,7 @@ from torch.autograd import Variable
 import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
-from torch.nn.utils import clip_grad_norm_
+from torch.nn.utils import clip_grad_norm_    # 梯度裁剪
 
 # 分布式训练
 import torch.distributed as dist
@@ -144,6 +144,8 @@ if args.cuda:
 
 def get_dataset(args):
     # process text
+    # text_proc : 文本处理对象
+    # raw_data : 标注文件中的database
     text_proc, raw_data = get_vocab_and_sentences(args.dataset_file, args.max_sentence_len)  # 处理后的text对象，原始标注语句信息
 
     # Create the dataset and data loader instance
@@ -211,7 +213,7 @@ def get_model(text_proc, args):
                                attn_dropout=args.attn_dropout,     # 0.2
                                vis_emb_dropout=args.vis_emb_dropout, # 0.1
                                cap_dropout=args.cap_dropout,       # 0.2
-                               nsamples=args.train_sample,
+                               nsamples=args.train_sample,         # 20
                                kernel_list=args.kernel_list,
                                stride_factor=args.stride_factor,
                                learn_mask=args.mask_weight>0)
@@ -268,7 +270,8 @@ def main(args):
     else:
         raise NotImplementedError
 
-    # learning rate decay every 1 epoch
+    # learning rate decay every 1 epoch 
+    # verbose（bool） - 如果为True，则为每次更新向stdout输出一条消息。 默认值：False
     scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, factor=args.reduce_factor,
                                                patience=args.patience_epoch,
                                                verbose=True)
