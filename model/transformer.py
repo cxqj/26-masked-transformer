@@ -90,8 +90,8 @@ class ResidualBlock(nn.Module):
         self.dropout = nn.Dropout(drop_ratio)
         self.layernorm = LayerNorm(d_model)
 
-    def forward(self, *x):  # *x = (q,k,v)
-        return self.layernorm(x[0] + self.dropout(self.layer(*x)))  # self.layer:multi_head
+    def forward(self, *x):  
+        return self.layernorm(x[0] + self.dropout(self.layer(*x)))  
 
 class Attention(nn.Module):
 
@@ -109,40 +109,42 @@ class Attention(nn.Module):
             tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵  (19,19)
             if key.is_cuda:
                 tri = tri.cuda(key.get_device())
-            dot_products.data.sub_(tri.unsqueeze(0))  
+            dot_products.data.sub_(tri.unsqueeze(0))    # sub_ 取负？？
         
         return matmul(self.dropout(F.softmax(dot_products / self.scale, dim=-1)), value) # (5,480,480)x(5,480,128)=(5,480,128) / (5,19,128)
 
 class MultiHead(nn.Module):
-
+    # d_key = d_value = 1024
     def __init__(self, d_key, d_value, n_heads, drop_ratio, causal=False):
         super().__init__()
         self.attention = Attention(d_key, drop_ratio, causal=causal)
+      
         # q,k,v matrix
-        self.wq = nn.Linear(d_key, d_key, bias=False)
-        self.wk = nn.Linear(d_key, d_key, bias=False)
-        self.wv = nn.Linear(d_value, d_value, bias=False)
+        self.wq = nn.Linear(d_key, d_key, bias=False)   # 1024-->1024
+        self.wk = nn.Linear(d_key, d_key, bias=False)   # 1024-->1024
+        self.wv = nn.Linear(d_value, d_value, bias=False)  # 1024-->1024
         
         # concat matrix
-        self.wo = nn.Linear(d_value, d_key, bias=False)
-        self.n_heads = n_heads
+        self.wo = nn.Linear(d_value, d_key, bias=False)  # 1024-->1024
+        self.n_heads = n_heads  # 8
 
     def forward(self, query, key, value):
         query, key, value = self.wq(query), self.wk(key), self.wv(value)  # (5,480,1024)
       
-        # (5,480,1024)-->(5,480,128)x8
+        # split q,k,v (5,480,1024)-->(5,480,128)x8
         query, key, value = (
             x.chunk(self.n_heads, -1) for x in (query, key, value))
         
         return self.wo(torch.cat([self.attention(q, k, v)
                           for q, k, v in zip(query, key, value)], -1))  # (5,480,128) x 8(heads)-->(5,480,1024) / (5,19,1024)
 
+# 如果不用激活函数，每一层输出都是上层输入的线性函数，无论神经网络有多少层，输出都是输入的线性组合。
 class FeedForward(nn.Module):
 
     def __init__(self, d_model, d_hidden):
         super().__init__()
-        self.linear1 = nn.Linear(d_model, d_hidden)
-        self.linear2 = nn.Linear(d_hidden, d_model)
+        self.linear1 = nn.Linear(d_model, d_hidden)   # 1024-->2048
+        self.linear2 = nn.Linear(d_hidden, d_model)   # 2048-->1024
 
     def forward(self, x):
         return self.linear2(F.relu(self.linear1(x)))
@@ -165,12 +167,14 @@ class DecoderLayer(nn.Module):
 
     def __init__(self, d_model, d_hidden, n_heads, drop_ratio):
         super().__init__()
+       
+        # 注意selfaten和attention的区别,解码层需要两层attention层
         self.selfattn = ResidualBlock(
             MultiHead(d_model, d_model, n_heads, drop_ratio, causal=True),   # causal = True 创建一个上三角矩阵
-            d_model, drop_ratio)
+            d_model, drop_ratio)    # 对单词进行attention
         self.attention = ResidualBlock(
             MultiHead(d_model, d_model, n_heads, drop_ratio),   
-            d_model, drop_ratio)
+            d_model, drop_ratio)    # 对编码后的单词和视频特征进行编码
         self.feedforward = ResidualBlock(FeedForward(d_model, d_hidden),
                                          d_model, drop_ratio)
 
@@ -180,7 +184,7 @@ class DecoderLayer(nn.Module):
         return self.feedforward(self.attention(x, encoding, encoding))  # cross module atten  (5,19,1024)
 
 class Encoder(nn.Module):
-
+    # d_model : 1024 d_hidden : 2048  n_vocab = 0 n_layers = 0 n_heads = 8
     def __init__(self, d_model, d_hidden, n_vocab, n_layers, n_heads,
                  drop_ratio):
         super().__init__()
@@ -196,7 +200,7 @@ class Encoder(nn.Module):
         x = self.dropout(x)
         if mask is not None:
             x = x*mask
-        encoding = []
+        encoding = []  # 保存编码后的结果
         for layer in self.layers:
             x = layer(x)
             if mask is not None:
@@ -218,7 +222,7 @@ class Decoder(nn.Module):
         self.vocab = vocab   # 词典对象
         self.d_out = len(vocab)
 
-    def forward(self, x, encoding):  # x : sent(5,19)  encoding : 编码的提议特征(5,480,1024)
+    def forward(self, x, encoding):  # x : sent(5,19)  encoding : 编码的提议特征[(5,480,1024)/(5,480,1024)]
         x = F.embedding(x, self.out.weight * math.sqrt(self.d_model))  # 词嵌入矩阵 # (5,19)-->(5,19,1024)
         x = x+positional_encodings_like(x)
         x = self.dropout(x)
@@ -226,7 +230,7 @@ class Decoder(nn.Module):
         # encoding = [(5,480,1024),(5,480,1024)]
         for layer, enc in zip(self.layers, encoding):
             x = layer(x, enc)
-        return x  # (5,19,1024)
+        return x      # (5,19,1024)
 
     def greedy(self, encoding, T):
         B, _, H = encoding[0].size()  # (91,480,1024)
@@ -363,7 +367,8 @@ class RealTransformer(nn.Module):
             ' <eos>', '').replace(' <pad>', '').replace(' .', '').replace('  ', '')
  
     def forward(self, x, s, x_mask=None, sample_prob=0):  # x:(5,480,1024) s:(5,20) x_mask:(5,480,1)
-        encoding = self.encoder(x, x_mask)  # 提议特征编码，与生成window_mask不同，这里只对window_mask内的特征编码
+        encoding = self.encoder(x, x_mask)  # [(5,480,1024)/(5,480,1024)]提议特征编码，x_maks就是预测生成的mask，其实可以认为它是对每个时间点的特征图赋予不同的权重
+        # 这里首先也是对输入的视频进行编码
 
         max_sent_len = 20
         if not self.training:
@@ -377,6 +382,7 @@ class RealTransformer(nn.Module):
             logits = self.decoder.out(h)
         else:
             if sample_prob == 0:
+                # 首先对输入单词编码
                 h = self.decoder(s[:, :-1].contiguous(), encoding)   # s:(5,19) e:(5,480,1024)-->(5,19,1024)
                 targets, h = mask(s[:, 1:].contiguous(), h)   # targets:(63) h:(63,1024) 
                 logits = self.decoder.out(h) # (63,24)  获取每个单词属于字典中某个单词的概率
