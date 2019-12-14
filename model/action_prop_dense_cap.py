@@ -60,14 +60,6 @@ class DropoutTime1D(nn.Module):
 
 
 class ActionPropDenseCap(nn.Module):
-    """  
-    in_emb_dropout,  0.1
-    attn_dropout,    0.2
-    vis_emb_dropout,  0.1
-    cap_dropout,     0.2
-    kernel_list,     [1, 2, 3, 4, 5, 7, 9, 11, 15, 21, 29, 41, 57, 71, 111, 161, 211, 251]
-    stride_factor,   50  
-    """
     def __init__(self, d_model, d_hidden, n_layers, n_heads, vocab,
                  in_emb_dropout, attn_dropout, vis_emb_dropout,
                  cap_dropout, nsamples, kernel_list, stride_factor,
@@ -77,7 +69,7 @@ class ActionPropDenseCap(nn.Module):
         self.kernel_list = kernel_list
         self.nsamples = nsamples  # 20
         self.learn_mask = learn_mask
-        self.d_model = d_model
+        self.d_model = d_model  
 
         self.mask_model = nn.Sequential(
             nn.Linear(d_model+window_length, d_model, bias=False),  # (1024 + 480)-->480
@@ -95,7 +87,7 @@ class ActionPropDenseCap(nn.Module):
             nn.ReLU()
         )
 
-        # encoder
+        # 用于编码输入的视频特征
         self.vis_emb = Transformer(d_model, 0, 0,
                                    d_hidden=d_hidden,
                                    n_layers=n_layers,
@@ -105,6 +97,7 @@ class ActionPropDenseCap(nn.Module):
         self.vis_dropout = DropoutTime1D(vis_emb_dropout) # 0.1
 
        
+        # 用于预测生成的提议
         self.prop_out = nn.ModuleList(
             [nn.Sequential(
                 nn.BatchNorm1d(d_model),
@@ -125,9 +118,9 @@ class ActionPropDenseCap(nn.Module):
                 for i in range(len(self.kernel_list))   # 18层
             ])
 
-        # decoder
+        # 生成caption
         self.cap_model = RealTransformer(d_model,
-                                         self.vis_emb.encoder, #share the encoder
+                                         self.vis_emb.encoder, #share the encoder  编码视频特征和编码caption的编码器是一样的
                                          vocab,  # 词典对象(解码时需要单词信息)
                                          d_hidden=d_hidden,
                                          n_layers=n_layers,
@@ -145,12 +138,12 @@ class ActionPropDenseCap(nn.Module):
     def forward(self, x, s_pos, s_neg, sentence,
                 sample_prob=0, stride_factor=10, scst=False,
                 gated_mask=False):
-        B, T, _ = x.size()
+        B, T, _ = x.size()    # (B,480,3072)
         dtype = x.data.type()
 
-        x_rgb, x_flow = torch.split(x, 2048, 2)
-        x_rgb = self.rgb_emb(x_rgb.contiguous())
-        x_flow = self.flow_emb(x_flow.contiguous())
+        x_rgb, x_flow = torch.split(x, 2048, 2)   # (B,480,2048)/(B,480,1024)
+        x_rgb = self.rgb_emb(x_rgb.contiguous())    # 2048-->512
+        x_flow = self.flow_emb(x_flow.contiguous())  # 1024-->512
 
         x = torch.cat((x_rgb, x_flow), 2)  # (5,480,1024)
 
@@ -164,9 +157,9 @@ class ActionPropDenseCap(nn.Module):
         vis_feat, all_emb = self.vis_emb(x)  # 对输入图片特征编码，只是单纯的为了获取window_mask
         # vis_feat = self.vis_dropout(vis_feat)
 
-        # B x T x C -> B x C x T
+       
         # for 1d conv
-        vis_feat = vis_feat.transpose(1,2).contiguous()  # (5,1024,480)  最后一层编码器的输出
+        vis_feat = vis_feat.transpose(1,2).contiguous()  # (5,480,1024)-->(5,1024,480)
 
         prop_lst = []
         
@@ -176,7 +169,7 @@ class ActionPropDenseCap(nn.Module):
             if kernel_size <= vis_feat.size(-1):
                 pred_o = kernel(vis_feat)   # (5,1024,480)-->(5,4,480)
              
-                # 预设一系列anchor
+          # --------------------------预设一系列anchor-------------------------------#
                 anchor_c = Variable(torch.FloatTensor(np.arange(
                     float(kernel_size)/2.0,
                     float(T+1-kernel_size/2.0),
@@ -186,8 +179,8 @@ class ActionPropDenseCap(nn.Module):
                 if anchor_c.size(0) != pred_o.size(-1):
                     raise Exception("size mismatch!")
 
-                anchor_c = anchor_c.expand(B, 1, anchor_c.size(0))  # (5,1,480)
-                anchor_l = Variable(torch.FloatTensor(anchor_c.size()).fill_(kernel_size).type(dtype)) # (5,1,480)
+                anchor_c = anchor_c.expand(B, 1, anchor_c.size(0))   # (5,1,480)expand相当于tensorflow中的tf.tile   
+                anchor_l = Variable(torch.FloatTensor(anchor_c.size()).fill_(kernel_size).type(dtype))  # (5,1,480)
 
                 pred_final = torch.cat((pred_o, anchor_l, anchor_c), 1)   # (5,6,480)
                 prop_lst.append(pred_final)
@@ -197,12 +190,12 @@ class ActionPropDenseCap(nn.Module):
                 break
 
         # Important! In prop_all, for the first dimension, the four values are proposal score, overlapping score (DEPRECATED!), length offset, and center offset, respectively
-        prop_all = torch.cat(prop_lst, 2)  # (5,6,6338) 其中6338为480（其他不一定是480） x 18,由于kernel_size不一样，不一定是480
+        prop_all = torch.cat(prop_lst, 2)  # (5,6,6338) 对于18种kernel_list共生成6338个anchors
 
         if B != s_pos.size(0) or B != s_neg.size(0):
             raise Exception('feature and ground-truth segment do not match!')
 
-        sample_each = self.nsamples // 2
+        sample_each = self.nsamples // 2    # 10
         pred_score = Variable(torch.FloatTensor(np.zeros((sample_each*B, 2))).type(dtype))  # (50,2)
         gt_score = Variable(torch.FloatTensor(np.zeros((sample_each*B, 2))).type(dtype)) # (50,2)
         pred_offsets = Variable(torch.FloatTensor(np.zeros((sample_each*B,2))).type(dtype)) # (50,2)
@@ -227,7 +220,7 @@ class ActionPropDenseCap(nn.Module):
 
         mask_loss = None
 
-        # prop_all : (fg_score, overlap_score, len_off, cen_off, anchor_l, anchor_c)
+        # prop_all : (fg_score, overlap_score, len_off, cen_off, anchor_l, anchor_c)     
         pred_len = prop_all[:, 4, :] * torch.exp(prop_all[:, 2, :])
         pred_cen = prop_all[:, 5, :] + prop_all[:, 4, :] * prop_all[:, 3, :]
 
@@ -256,16 +249,16 @@ class ActionPropDenseCap(nn.Module):
 
                 # sample neg anchors
                 neg_sam = neg_anchor[i].data  # (neg_idx,overlap)
-                neg_sam_ind = int(neg_sam[0])
+                neg_sam_ind = int(neg_sam[0]) # 对应的哪一个预设的anchor
                 pred_score[b*sample_each+i, 1] = prop_all[b, 0, neg_sam_ind]
                 gt_score[b*sample_each+i, 1] = 0
 
                 # caption the segment
                 if i == pred_index: # only need once, since one sample corresponds to one sentence only
-                           # TODO Is that true? Why cannot caption all?
+                    # TODO Is that true? Why cannot caption all?
                     # anchor length, 4, 5 are the indices for anchor length and center
                    
-                    # 预设的原始anchor
+                    # 预设的所有原始anchor对应的长度和中心,这个anchor由于是正样本因此可以认为是gt
                     anc_len = prop_all[b, 4, pos_sam_ind].data.item()
                     anc_cen = prop_all[b, 5, pos_sam_ind].data.item()
 
@@ -305,6 +298,7 @@ class ActionPropDenseCap(nn.Module):
                         # (B*4)-->(pred_start,pred_end,anc_start,anc_end)
                         pe_locs[b] = pred_start_w
                         pe_locs[B + b] = pred_end_w
+                        # 从正样本中选取的gt ancor
                         pe_locs[B*2 + b] = Variable(torch.Tensor([max(0, math.floor(anc_cen - anc_len / 2.))]).type(dtype))
                         pe_locs[B*3 + b] = Variable(torch.Tensor([min(T, math.ceil(anc_cen + anc_len / 2.))]).type(dtype))
 
@@ -315,11 +309,11 @@ class ActionPropDenseCap(nn.Module):
             # 对选取的正样本的位置信息进行编码 (B*4,256)
             pos_encs = positional_encodings(pe_locs, self.d_model//4)  
        
-            in_pred_mask = torch.cat((pos_encs[:B], pos_encs[B:B*2],    # (5,256)+(5,256)+(5,256)+(5,256)+(5,480) = (5,1504)
+            in_pred_mask = torch.cat((pos_encs[:B], pos_encs[B:B*2],    # (5,256x4)+(5,480) = (5,1504)
                                       pos_encs[B*2:B*3], pos_encs[B*3:B*4],
                                       anchor_window_mask), 1)
-            
-            pred_mask = self.mask_model(in_pred_mask).view(B, T, 1)    # (5,480,1) 预测的连续mask
+            # 因为这个mask加入了正样本的anchor信息，因此将这个生成的mask认为是gt mask
+            pred_mask = self.mask_model(in_pred_mask).view(B, T, 1)    # (5,480,1) 
 
             if gated_mask:
                 gate_scores = F.sigmoid(gate_scores)
@@ -353,7 +347,7 @@ class ActionPropDenseCap(nn.Module):
                 pred_sentence, gt_cent,
                 scst_loss, mask_loss)
 
-    # 测试时调用
+    
     def inference(self, x, actual_frame_length, sampling_sec,
                   min_prop_num, max_prop_num,
                   min_prop_num_before_nms, pos_thresh, stride_factor,
