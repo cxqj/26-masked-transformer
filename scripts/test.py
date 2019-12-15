@@ -163,7 +163,7 @@ def validate(model, loader, args):
             raise NotImplementedError
 
     for data in loader:
-        image_feat, original_num_frame, video_prefix = data
+        image_feat, original_num_frame, video_prefix = data  # (1,480,3072) , 369
         with torch.no_grad():
             image_feat = Variable(image_feat)  # (1,480,3072)
             # ship data to gpu
