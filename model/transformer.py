@@ -53,10 +53,10 @@ def positional_encodings_like(x, t=None): # (5,480,1024)
                 positions / 10000 ** ((channel - 1) / x.size(2)))
     return Variable(encodings)  # (480,1024)
 
-# targets：对应的真实语句的标注(5,19)
-# out : (5,19,1024)
-def mask(targets, out):
-    mask = (targets != 1)   
+
+# ------------------------------用于选取句子中不为1(pad)的单词对应的信息--------------------------------#
+def mask(targets, out):  # (5,19)/(5,19,1024)
+    mask = (targets != 1)   #(5,19) 获取句子中不为1的mask   
     out_mask = mask.unsqueeze(-1).expand_as(out)  # (5,19)-->(5,19,1024)
     return targets[mask], out[out_mask].view(-1, out.size(-1))
 
@@ -382,7 +382,7 @@ class RealTransformer(nn.Module):
             logits = self.decoder.out(h)
         else:
             if sample_prob == 0:
-                # 首先对输入单词编码
+                # 对单词和编码后的视觉特征进一步编码
                 h = self.decoder(s[:, :-1].contiguous(), encoding)   # s:(5,19) e:(5,480,1024)-->(5,19,1024)
                 targets, h = mask(s[:, 1:].contiguous(), h)   # targets:(63) h:(63,1024) 
                 logits = self.decoder.out(h) # (63,24)  获取每个单词属于字典中某个单词的概率
@@ -415,7 +415,7 @@ class RealTransformer(nn.Module):
             sent_lst.append(self.denum(pred.data[i]))
         return sent_lst
   
-    # 暂时不知道干嘛的
+    # --------------------------------------------------scst_loss-----------------------------------------------------#
     """
     scst_loss indicates self-critical sequence training (as in https://arxiv.org/abs/1612.00563). 
     We didn't report results w/ this training loss and hence it's deprecated. Still, we keep this 
