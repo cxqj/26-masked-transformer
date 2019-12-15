@@ -16,9 +16,9 @@ class ANetTestDataset(Dataset):
                  text_proc, raw_data, split, learn_mask=False):
         super(ANetTestDataset, self).__init__()
 
-        self.split = split
+        self.split = split   # validation
         split_path = os.path.join(image_path, self.split)
-        self.slide_window_size = slide_window_size
+        self.slide_window_size = slide_window_size  # 480
         self.learn_mask = learn_mask
 
         self.sample_list = []  # list of list for data samples
