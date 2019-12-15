@@ -249,6 +249,12 @@ class Decoder(nn.Module):
         embedW = self.out.weight * math.sqrt(self.d_model)  # (24,1024) 词嵌入 
         
         # hiddens[0] 记录初始隐状态
+        """
+         Note that during decoding,the encoder performs the forward propagation again so thathe representation
+         of each encoder layer contains only theinformation for the current proposal
+        
+        """
+
         hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])  # (91,20,1024)
         
 
