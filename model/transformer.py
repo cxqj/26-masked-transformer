@@ -65,7 +65,7 @@ def matmul(x, y):
     if x.dim() == y.dim():
         return x @ y
     if x.dim() == y.dim() - 1:
-        return (x.unsqueeze(-2) @ y).squeeze(-2)
+        return (x.unsqueeze(-2) @ y).squeeze(-2)   # (91,128,1)x(91,1,128)=(91,1,1)-->(91,1)
     return (x @ y.unsqueeze(-2)).squeeze(-2)
 
 class LayerNorm(nn.Module):
@@ -90,7 +90,7 @@ class ResidualBlock(nn.Module):
         self.dropout = nn.Dropout(drop_ratio)
         self.layernorm = LayerNorm(d_model)
 
-    def forward(self, *x):  
+    def forward(self, *x):  # infenece : [(91,1024),(91,1,1024),(91,1,1024)]
         return self.layernorm(x[0] + self.dropout(self.layer(*x)))  
 
 class Attention(nn.Module):
@@ -101,7 +101,8 @@ class Attention(nn.Module):
         self.dropout = nn.Dropout(drop_ratio)
         self.causal = causal
 
-    def forward(self, query, key, value):  # (5,480,128)
+    def forward(self, query, key, value):  # (5,480,128) 
+        # 在测试推理时query : (91,128), key: (91,t+1,128),因此需要重写matmul
         dot_products = matmul(query, key.transpose(1, 2))  # (5,480,128) x (5,128,480) = (5,480,480) / (5,19,128)x(5,128,19)=(5,19,19)
       
         # 为什么在计算单词间的attention时需要创建上三角矩阵
@@ -170,11 +171,11 @@ class DecoderLayer(nn.Module):
        
         # 注意selfaten和attention的区别,解码层需要两层attention层
         self.selfattn = ResidualBlock(
-            MultiHead(d_model, d_model, n_heads, drop_ratio, causal=True),   # causal = True 创建一个上三角矩阵
+            MultiHead(d_model, d_model, n_heads, drop_ratio, causal=True),   # causal = True 创建一个上三角矩阵,causal : 有因果关系的
             d_model, drop_ratio)    # 对单词进行attention
         self.attention = ResidualBlock(
             MultiHead(d_model, d_model, n_heads, drop_ratio),   
-            d_model, drop_ratio)    # 对编码后的单词和视频特征进行编码
+            d_model, drop_ratio)    # 对编码后的单词特征和视频特征进行编码
         self.feedforward = ResidualBlock(FeedForward(d_model, d_hidden),
                                          d_model, drop_ratio)
 
@@ -233,7 +234,7 @@ class Decoder(nn.Module):
         return x      # (5,19,1024)
 
     #---------------------------------------------用于测试时生成单词----------------------------------------#
-    def greedy(self, encoding, T):
+    def greedy(self, encoding, T):   #encoding: [(91,480,1024),(91,480,1024)]  T=20
         B, _, H = encoding[0].size()  # (91,480,1024)
         # change T to 20, max # of words in a sentence
         # T = 40
@@ -243,12 +244,11 @@ class Decoder(nn.Module):
         prediction = Variable(encoding[0].data.new(B, T).long().fill_(
             self.vocab.stoi['<pad>']))  # (91,20)
         
-        # hiddens[0] 记录初始隐状态
         hiddens = [Variable(encoding[0].data.new(B, T, H).zero_())
-                   for l in range(len(self.layers) + 1)]  
-        embedW = self.out.weight * math.sqrt(self.d_model)  # 词嵌入矩阵 (v,d)
+                   for l in range(len(self.layers) + 1)]     # [(91,20,1024),(91,20,1024),(91,20,1024)]
+        embedW = self.out.weight * math.sqrt(self.d_model)  # (24,1024) 词嵌入 
         
-        
+        # hiddens[0] 记录初始隐状态
         hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])  # (91,20,1024)
         
 
@@ -256,7 +256,7 @@ class Decoder(nn.Module):
             if t == 0:
                 hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(Variable(
                     encoding[0].data.new(B).long().fill_(
-                        self.vocab.stoi['<init>'])), embedW)  # 位置编码+单词词嵌入
+                        self.vocab.stoi['<init>'])), embedW)  # 初始隐藏状态+词嵌入
             else:
                 hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(prediction[:, t - 1],     
                                                                 embedW)
@@ -264,16 +264,21 @@ class Decoder(nn.Module):
             
             for l in range(len(self.layers)):
                 """
-                Note that the self-attention layer in the decoder can only attend to the current and previous positions
+                Note that the self-attention layer in the decoder can only attend to the current and previous positions
                 to preserve the auto-regressive property.
                 """
-                x = hiddens[l][:, :t + 1]  
-                x = self.layers[l].selfattn(hiddens[l][:, t], x, x)   # 计算当前单词与前面所有单词的注意力
+                # 选取前t个单词对应的编码特征(包含t)
+                x = hiddens[l][:, :t + 1]  # (91,t+1,1024)
+               
+                # 计算当前单词与前面所有单词(包括当前单词)的注意力，注意调用的是self_attention,其中的causal = True
+                x = self.layers[l].selfattn(hiddens[l][:, t], x, x)  # (91,1024)  
+                
+                # x : (91,1024)  encoding[l] : (91,480,1024)  encoding[l] : (91,480,1024)
                 hiddens[l + 1][:, t] = self.layers[l].feedforward(
                     self.layers[l].attention(x, encoding[l], encoding[l]))  # 计算单词与提议特征的注意力
 
-            _, prediction[:, t] = self.out(hiddens[-1][:, t]).max(-1)  # (91,20) 得到的每个单词最大概率对应字典中单词的索引
-        return hiddens, prediction
+            _, prediction[:, t] = self.out(hiddens[-1][:, t]).max(-1)  # (91,20,1024)---->(91,max(24))---->(91,20) 得到的每个单词最大概率对应字典中单词的索引
+        return hiddens, prediction   # hiddens : [(91,20,1024),(91,20,1024),(91,20,1024)], prediction : (91,20)
 
 
     def sampling(self, encoding, gt_token, T, sample_prob, is_argmax=True):
@@ -304,10 +309,10 @@ class Decoder(nn.Module):
                         embedW)
             hiddens[0][:, t] = self.dropout(hiddens[0][:, t])
             for l in range(len(self.layers)):
-                x = hiddens[l][:, :t + 1]
+                x = hiddens[l][:, :t + 1]   # (91,1,1024)
                 x = self.layers[l].selfattn(hiddens[l][:, t], x, x)
                 hiddens[l + 1][:, t] = self.layers[l].feedforward(
-                    self.layers[l].attention(x, encoding[l], encoding[l]))
+                    self.layers[l].attention(x, encoding[l], encoding[l]))  # x : (91,1024)
 
             if is_argmax:
                 _, prediction[:, t] = self.out(hiddens[-1][:, t]).max(-1)
@@ -363,7 +368,8 @@ class RealTransformer(nn.Module):
         self.n_layers = n_layers
         self.tokenizer = PTBTokenizer()  # 分词器
 
-    def denum(self, data):
+    #--------------------------------------------将单词idx索引转为单词--------------------------------------#
+    def denum(self, data):   # data : (20)
         return ' '.join(self.decoder.vocab.itos[i] for i in data).replace(
             ' <eos>', '').replace(' <pad>', '').replace(' .', '').replace('  ', '')
  
