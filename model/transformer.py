@@ -232,6 +232,7 @@ class Decoder(nn.Module):
             x = layer(x, enc)
         return x      # (5,19,1024)
 
+    #---------------------------------------------用于测试时生成单词----------------------------------------#
     def greedy(self, encoding, T):
         B, _, H = encoding[0].size()  # (91,480,1024)
         # change T to 20, max # of words in a sentence
@@ -402,18 +403,39 @@ class RealTransformer(nn.Module):
 
         return logits, targets  # (63,24) / (63)
 
-    # 预测句子,
+# ---------------------------------------------测试时预测句子----------------------------------------------#
     #x:提议对应的特征 (91,480,1024)
     #x_mask: 提议对应的窗口mask (91,480,1)
     #T：20
     def greedy(self, x, x_mask, T):
-        encoding = self.encoder(x, x_mask)  
+        encoding = self.encoder(x, x_mask)  # [(91,480,1024),(91,480,1024)]
 
-        _, pred = self.decoder.greedy(encoding, T)
+        _, pred = self.decoder.greedy(encoding, T) # T = 20
+       
         sent_lst = []
         for i in range(pred.data.size(0)):
             sent_lst.append(self.denum(pred.data[i]))
         return sent_lst
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   
     # --------------------------------------------------scst_loss-----------------------------------------------------#
     """
