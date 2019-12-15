@@ -456,10 +456,15 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
         else:
             mask_loss = cls_loss.new(1).fill_(0)
 
-        optimizer.zero_grad()
+        optimizer.zero_grad()   # 首先将梯度置为0
         total_loss.backward()
 
         # enable the clipping for zero mask loss training
+        """
+        filter() 函数用于过滤序列，过滤掉不符合条件的元素，返回由符合条件元素组成的新列表。
+        filter(function, iterable)  function -- 判断函数。 iterable -- 可迭代对象
+    
+        """
         total_grad_norm = clip_grad_norm_(filter(lambda p: p.requires_grad, model.parameters()),
                                          args.grad_norm)
 
