@@ -238,7 +238,7 @@ class ActionPropDenseCap(nn.Module):
             # 获取batch_size每一个正样本的预测结果，并随机选取一个正样本来cpation
             for i in range(sample_each):
                 # sample pos anchors
-                pos_sam = pos_anchor[i].data   # (pos_idx,overlap,len_off,cen_off)
+                pos_sam = pos_anchor[i].data   # (anchor_idx,overlap,len_off,cen_off)
                 pos_sam_ind = int(pos_sam[0])  # 对应的哪一个预设的anchor
 
                 pred_score[b*sample_each+i, 0] = prop_all[b, 0, pos_sam_ind]  # prop_all : (5,6,6338)
@@ -323,6 +323,7 @@ class ActionPropDenseCap(nn.Module):
             else:
                 window_mask = pred_mask
 
+            # pred_mask可以认为是gt_mask
             mask_loss = F.binary_cross_entropy_with_logits(pred_mask, pred_bin_window_mask.view(B, T, 1))
             # mask_loss = F.binary_cross_entropy_with_logits(window_mask, batch_mask)
         else:
