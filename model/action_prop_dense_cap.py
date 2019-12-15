@@ -348,7 +348,7 @@ class ActionPropDenseCap(nn.Module):
                 pred_sentence, gt_cent,
                 scst_loss, mask_loss)
 
-    
+#-------------------------------------------------------------------test------------------------------------------------------------#    
     def inference(self, x, actual_frame_length, sampling_sec,
                   min_prop_num, max_prop_num,
                   min_prop_num_before_nms, pos_thresh, stride_factor,
@@ -403,10 +403,10 @@ class ActionPropDenseCap(nn.Module):
         prop_all[:,:2,:] = F.sigmoid(prop_all[:,:2,:])
 
 
-        pred_len = prop_all[:, 4, :] * torch.exp(prop_all[:, 2, :])
-        pred_cen = prop_all[:, 5, :] + prop_all[:, 4, :] * prop_all[:, 3, :]
+        pred_len = prop_all[:, 4, :] * torch.exp(prop_all[:, 2, :])   # (1,6338)
+        pred_cen = prop_all[:, 5, :] + prop_all[:, 4, :] * prop_all[:, 3, :]  # (1,6338)
 
-        nms_thresh_set = np.arange(0.9, 0.95, 0.05).tolist() # 0.9
+        nms_thresh_set = np.arange(0.9, 0.95, 0.05).tolist() # [0.9]
         all_proposal_results = []
 
         # store positional encodings, size of B x 4,
@@ -414,7 +414,7 @@ class ActionPropDenseCap(nn.Module):
         # second B values are predicted ends,
         # third B values are anchor starts,
         # last B values are anchor ends
-        pred_start_lst = [] #torch.zeros(B * 4).type(dtype)
+        pred_start_lst = [] 
         pred_end_lst = []
         anchor_start_lst = []
         anchor_end_lst = []
@@ -423,17 +423,19 @@ class ActionPropDenseCap(nn.Module):
 
         for b in range(B):
             crt_pred = prop_all.data[b]   # (6,6338)
-            crt_pred_cen = pred_cen.data[b] 
-            crt_pred_len = pred_len.data[b]
+            crt_pred_cen = pred_cen.data[b]  # (6338)
+            crt_pred_len = pred_len.data[b]  # (6338)
             pred_masks = []
             batch_result = []
             
-            crt_nproposal = 0
-            # 逐元素比较input和other ， 即是否input>otherinput>other 如果两个张量有相同的形状和元素值，则返回True ，否则 False。
+            crt_nproposal = 0    # 指示当前在处理第几个proposal
+            # torch.gt 逐元素比较input和other ， 即是否input>otherinput>other 如果两个张量有相同的形状和元素值，则返回True ，否则 False。
             nproposal = torch.sum(torch.gt(prop_all.data[b, 0, :], pos_thresh))
             nproposal = min(max(nproposal, min_prop_num_before_nms),
                             prop_all.size(-1))
-            pred_results = np.empty((nproposal, 3))  
+            pred_results = np.empty((nproposal, 3))    # (200,3)
+            
+            
             _, sel_idx = torch.topk(crt_pred[0], nproposal)  # 选取topk个提议，sel_idx 为对应提议的索引
  
             start_t = time.time()
@@ -451,11 +453,11 @@ class ActionPropDenseCap(nn.Module):
 
                     
                     hasoverlap = False
-                    if crt_nproposal > 0:
+                    if crt_nproposal > 0:  
                         if np.max(segment_iou(np.array([pred_start, pred_end]), pred_results[:crt_nproposal])) > nms_thresh:
                             hasoverlap = True
 
-                    # if haoverlap < nms_thresh则认为没有和这个预测anchor重叠度大于阈值的anchor
+                   
                     if not hasoverlap:
                         pred_bin_window_mask = torch.zeros(1, T, 1).type(dtype)  # (1,480,1)
                         win_start = math.floor(max(min(pred_start, min(original_frame_len, T)-1), 0))
@@ -471,7 +473,7 @@ class ActionPropDenseCap(nn.Module):
 
                         if self.learn_mask:
                             # 4, 5 are the indices for anchor length and center
-                            anc_len = crt_pred[4, sel_idx[prop_idx]]
+                            anc_len = crt_pred[4, sel_idx[prop_idx]]   # crt_pred : (6,6338)
                             anc_cen = crt_pred[5, sel_idx[prop_idx]]
                             # only use the pos sample to train, could potentially use more sample for training mask, but this is easier to do
                             amask = torch.zeros(1,T).type(dtype)
@@ -480,6 +482,7 @@ class ActionPropDenseCap(nn.Module):
                             min(T, math.ceil(anc_cen + anc_len / 2.))] = 1.
                             anchor_window_mask.append(amask)
 
+                            #----------------将预测的anchor的起始和结束时间及参考真实anchor的起止时间添加到列表中----------#
                             pred_start_lst.append(torch.Tensor([pred_start_w]).type(dtype))
                             pred_end_lst.append(torch.Tensor([pred_end_w]).type(dtype))
                             anchor_start_lst.append(torch.Tensor([max(0,
@@ -512,7 +515,7 @@ class ActionPropDenseCap(nn.Module):
                 pred_results[0] = np.array([0, min(original_frame_len, T), pos_thresh])
                 crt_nproposal = 1
 
-            pred_masks = Variable(torch.cat(pred_masks, 0))
+            pred_masks = Variable(torch.cat(pred_masks, 0))  # 91个满足条件的提议 (91,480)
             
             #将输入特征拓展到和提议数相同
             batch_x = x[b].unsqueeze(0).expand(pred_masks.size(0), x.size(1), x.size(2))  # (1,480,1024)-->(91,480,1024)
@@ -547,7 +550,7 @@ class ActionPropDenseCap(nn.Module):
 
             mid2_t = time.time()
 
-            #----------------------------------------------------------------------------------------------------#
+            #------------------------------------生成caption------------------------------------#
             
             pred_sentence = []
             # use cap_batch as caption batch size
@@ -562,7 +565,7 @@ class ActionPropDenseCap(nn.Module):
                 pred_sentence += self.cap_model.greedy(batch_x[batch_start:batch_end],
                                                        window_mask[batch_start:batch_end], 20)
 
-            pred_results = pred_results[:crt_nproposal]
+            pred_results = pred_results[:crt_nproposal]   # crt_nproposals = 91
             assert len(pred_sentence) == crt_nproposal, (
                 "number of predicted sentence and proposal does not match"
             )
