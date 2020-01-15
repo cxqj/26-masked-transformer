@@ -458,3 +458,4 @@ def anet_collate_fn(batch_lst):
             
             
     return (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch)
+
