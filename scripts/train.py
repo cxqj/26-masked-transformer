@@ -23,7 +23,6 @@ from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 from torch.nn.utils import clip_grad_norm_    # 梯度裁剪
 
-# 分布式训练
 import torch.distributed as dist
 import torch.utils.data.distributed
 
@@ -42,7 +41,7 @@ parser.add_argument('--feature_root', default='', type=str, help='the feature ro
 parser.add_argument('--dur_file', default='', type=str)
 parser.add_argument('--train_data_folder', default=['training'], type=str, nargs='+', help='training data folder')
 parser.add_argument('--val_data_folder', default=['validation'], help='validation data folder')
-# 保存samplelist
+
 parser.add_argument('--save_train_samplelist', action='store_true')  
 parser.add_argument('--load_train_samplelist', action='store_true')
 parser.add_argument('--train_samplelist_path', type=str, default='/z/home/luozhou/subsystem/densecap_vid/train_samplelist.pkl')
@@ -71,7 +70,6 @@ parser.add_argument('--slide_window_size', default=480, type=int, help='the (tem
 parser.add_argument('--slide_window_stride', default=20, type=int, help='the step size of the sliding window')
 parser.add_argument('--sampling_sec', default=0.5, help='sample frame (RGB and optical flow) with which time interval')
 
-# 滑动窗口生成提议的窗口大小
 parser.add_argument('--kernel_list', default=[1, 2, 3, 4, 5, 7, 9, 11, 15, 21, 29, 41, 57, 71, 111, 161, 211, 251],
                     type=int, nargs='+')
 parser.add_argument('--pos_thresh', default=0.7, type=float)
@@ -81,7 +79,7 @@ parser.add_argument('--stride_factor', default=50, type=int, help='the proposal 
 # Optimization: General
 parser.add_argument('--max_epochs', default=20, type=int, help='max number of epochs to run for')
 
-# 注意batch_size指的不是多少个视频，而是指多少个gt的segments，因为加载数据加载的是self.sample_list,每个gt提议都对应一行
+# batch_size为每次处理的sentence个数
 parser.add_argument('--batch_size', default=32, type=int, help='what is the batch size in number of images per batch? (there will be x seq_per_img sentences)')
 parser.add_argument('--valid_batch_size', default=64, type=int)
 parser.add_argument('--cls_weight', default=1.0, type=float)
@@ -145,7 +143,7 @@ if args.cuda:
 def get_dataset(args):
     # process text
     # text_proc : 文本处理对象
-    # raw_data : 标注文件中的database
+    # raw_data :  标注文件中的database
     text_proc, raw_data = get_vocab_and_sentences(args.dataset_file, args.max_sentence_len)  # 处理后的text对象，原始标注语句信息
 
     # Create the dataset and data loader instance
@@ -199,21 +197,23 @@ def get_dataset(args):
                               num_workers=args.num_workers,
                               collate_fn=anet_collate_fn)
 
-    return train_loader, valid_loader, text_proc, train_sampler   # train_sampler = None
+    # train_sampler = None
+    return train_loader, valid_loader, text_proc, train_sampler   
 
 
 def get_model(text_proc, args):
-    sent_vocab = text_proc.vocab  # 字典对象  (text_proc.vocab.itos)
+    sent_vocab = text_proc.vocab  # 字典
+  
     model = ActionPropDenseCap(d_model=args.d_model,
                                d_hidden=args.d_hidden,
                                n_layers=args.n_layers,
                                n_heads=args.n_heads,
-                               vocab=sent_vocab,  # 传入的是字典对象
-                               in_emb_dropout=args.in_emb_dropout, # 0.1
-                               attn_dropout=args.attn_dropout,     # 0.2
+                               vocab=sent_vocab,                     # 字典对象
+                               in_emb_dropout=args.in_emb_dropout,   # 0.1
+                               attn_dropout=args.attn_dropout,       # 0.2
                                vis_emb_dropout=args.vis_emb_dropout, # 0.1
-                               cap_dropout=args.cap_dropout,       # 0.2
-                               nsamples=args.train_sample,         # 20
+                               cap_dropout=args.cap_dropout,         # 0.2
+                               nsamples=args.train_sample,           # 20
                                kernel_list=args.kernel_list,
                                stride_factor=args.stride_factor,
                                learn_mask=args.mask_weight>0)
@@ -228,9 +228,17 @@ def get_model(text_proc, args):
     if args.cuda:
         if args.distributed:
             model.cuda()
+            """
+            在多机多卡情况下分布式训练数据的读取也是一个问题，不同的卡读取到的数据应该是不同的。
+            dataparallel(单机多卡)的做法是直接将batch切分到不同的卡，这种方法对于多机来说不可取，因为多
+            机之间直接进行数据传输会严重影响效率。于是有了利用sampler确保dataloader只会load到
+            整个数据集的一个特定子集的做法。DistributedSampler(多机多卡)就是做这件事的。它为每一个子进程
+            划分出一部分数据集，以避免不同进程之间数据重复。
+            
+            """
             model = torch.nn.parallel.DistributedDataParallel(model)
         else:
-            model = torch.nn.DataParallel(model).cuda()
+            model = torch.nn.DataParallel(model).cuda()  # 单机多卡
         # elif torch.cuda.device_count() > 1:
         #     model = torch.nn.DataParallel(model).cuda()
         # else:
@@ -251,7 +259,7 @@ def main(args):
     train_loader, valid_loader, text_proc, train_sampler = get_dataset(args)
 
     print('building model')
-    model = get_model(text_proc, args)
+    model = get_model(text_proc, args)   # text_proc 是文本处理对象
 
     # filter params that don't require gradient (credit: PyTorch Forum issue 679)
     # smaller learning rate for the decoder
