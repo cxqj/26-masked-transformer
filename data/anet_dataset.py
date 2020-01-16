@@ -421,6 +421,8 @@ def anet_collate_fn(batch_lst):
     batch_size = len(batch_lst)
 
     sentence_batch = torch.LongTensor(np.ones((batch_size, sentence.size(0)),dtype='int64'))
+	
+    # (B,T,C)
     img_batch = torch.FloatTensor(np.zeros((batch_size,
                                             img_feat.size(0),
                                             img_feat.size(1))))
@@ -439,8 +441,9 @@ def anet_collate_fn(batch_lst):
         perm_idx = torch.randperm(len(pos_seg))  # random select
         if len(pos_seg) >= sample_each:
             tempo_seg_pos[batch_idx,:,:] = pos_seg_tensor[perm_idx[:sample_each]]
-        else:
+        else:   # 如果正样本个数少于指定样本个数，则随机取样凑够指定样本个数
             tempo_seg_pos[batch_idx,:len(pos_seg),:] = pos_seg_tensor
+	    # 对input的每一行做n_samples次取值，输出的张量是每一次取值时input张量对应行的下标。
             idx = torch.multinomial(torch.ones(len(pos_seg)), sample_each-len(pos_seg), True)
             tempo_seg_pos[batch_idx,len(pos_seg):,:] = pos_seg_tensor[idx]
 
@@ -456,6 +459,9 @@ def anet_collate_fn(batch_lst):
             tempo_seg_neg[batch_idx, len(neg_seg):, :] = neg_seg_tensor[idx]
 
             
-            
+    # img_batch : (5,480,3072)
+    # seg_pos   : (5,10,4)
+    # seg_neg   : (5,10,2)
+    # sentence_batch : (5,20)
     return (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch)
 
