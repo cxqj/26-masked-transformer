@@ -31,6 +31,15 @@ from pycocoevalcap.meteor.meteor import Meteor
 
 INF = 1e10
 
+"""
+位置编码的每一个维度对应正弦曲线，波长构成了从2*pi到10000*2*pi的等比序列
+正弦函数能够表达相对位置信息。，主要数学依据是以下两个公式：
+        sin(a+b) = sina x cosb + cosa x sinb
+        cos(a+b) = cosa x cosb - sina x sinb
+        
+Word embedding大家都很熟悉了，它是对序列中的词汇的编码，把每一个词汇编码成
+d_{model}维的向量！看到没有，Postional encoding是对词汇的位置编码，word embedding是对词汇本身编码！
+"""
 def positional_encodings_like(x, t=None): # (5,480,1024)
     if t is None:
         positions = torch.arange(0, x.size(1)).float()
@@ -67,18 +76,22 @@ def matmul(x, y):
     if x.dim() == y.dim() - 1:
         return (x.unsqueeze(-2) @ y).squeeze(-2)   # (91,128,1)x(91,1,128)=(91,1,1)-->(91,1)
     return (x @ y.unsqueeze(-2)).squeeze(-2)
-
+"""
+Normalization就是把输入转化成均值为0方差为1的数据。在把数据送入激活函数之前进行normalization（归一化），
+因为我们不希望输入数据落在激活函数的饱和区。
+"""
 class LayerNorm(nn.Module):
 
     def __init__(self, d_model, eps=1e-6):
         super().__init__()
         self.gamma = nn.Parameter(torch.ones(d_model))
         self.beta = nn.Parameter(torch.zeros(d_model))
-        self.eps = eps
-
+        self.eps = eps  # 一个很小的数，防止数值计算的除0错误
+    
+    # x : (B,T,C)
     def forward(self, x):
-        mean = x.mean(-1, keepdim=True)
-        std = x.std(-1, keepdim=True)
+        mean = x.mean(-1, keepdim=True)  # 在X的最后一个维度求均值，最后一个维度就是模型的维度
+        std = x.std(-1, keepdim=True)    # 在X的最后一个维度求方差，最后一个维度就是模型的维度
         return self.gamma * (x - mean) / (std + self.eps) + self.beta
 
 # 残差结构有什么好处呢？显而易见：因为增加了一项x，那么该层网络对x求偏导的时候，多了一个常数项1！所以在反向传播过程中，梯度连乘，也不会造成梯度消失！
