@@ -327,7 +327,7 @@ def main(args):
         all_sent_losses.append(val_sent_loss)
         all_mask_losses.append(val_mask_loss)
 
-        # 可视化训练过程
+        
         if args.enable_visdom:
             if vis_window['loss'] is None:
                 if not args.distributed or (args.distributed and dist.get_rank() == 0):
@@ -372,7 +372,7 @@ def main(args):
                                       'dev_sentence',
                                       'dev_mask']))
 
-        #保存最优模型
+        # 若验证Loss小于最优loss则保存模型
         if valid_loss < best_loss:
             best_loss = valid_loss
             if (args.distributed and dist.get_rank() == 0) or not args.distributed:
@@ -427,7 +427,7 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
     
     for train_iter, data in enumerate(train_loader):
         (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch) = data
-        img_batch = Variable(img_batch)   # (5,480,3072)
+        img_batch = Variable(img_batch)         # (5,480,3072)
         tempo_seg_pos = Variable(tempo_seg_pos) # (5,10,4)
         tempo_seg_neg = Variable(tempo_seg_neg) # (5,10,2)
         sentence_batch = Variable(sentence_batch) # (5,20)
@@ -444,13 +444,13 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
         pred_sentence, gt_sent,
          scst_loss, mask_loss) = model(img_batch, tempo_seg_pos,
                                        tempo_seg_neg, sentence_batch,
-                                       sample_prob, args.stride_factor,   # stride_factor:时序卷积核步长参数，math.ceil(kernel_len/stride_factor)
+                                       sample_prob, args.stride_factor,   # 卷积核大小为：math.ceil(kernel_len/stride_factor)
                                        scst=args.scst_weight > 0,
                                        gated_mask=args.gated_mask)
 
-        cls_loss = model.module.bce_loss(pred_score, gt_score) * args.cls_weight  # 1.0
+        cls_loss = model.module.bce_loss(pred_score, gt_score) * args.cls_weight      # 1.0
         reg_loss = model.module.reg_loss(pred_offsets, gt_offsets) * args.reg_weight  # 10.0
-        sent_loss = F.cross_entropy(pred_sentence, gt_sent) * args.sent_weight  # 0.25
+        sent_loss = F.cross_entropy(pred_sentence, gt_sent) * args.sent_weight        # 0.25
 
         total_loss = cls_loss + reg_loss + sent_loss
 
@@ -459,12 +459,13 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
             total_loss += scst_loss
 
         if mask_loss is not None:
-            mask_loss = args.mask_weight * mask_loss # mask_weight : 1.0
+            mask_loss = args.mask_weight * mask_loss     # mask_weight : 1.0
             total_loss += mask_loss
         else:
             mask_loss = cls_loss.new(1).fill_(0)
 
-        optimizer.zero_grad()   # 首先将梯度置为0
+        # 首先将梯度置为0再进行loss反传
+        optimizer.zero_grad()   
         total_loss.backward()
 
         # enable the clipping for zero mask loss training
