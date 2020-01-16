@@ -72,15 +72,15 @@ class ActionPropDenseCap(nn.Module):
         self.d_model = d_model  
 
         self.mask_model = nn.Sequential(
-            nn.Linear(d_model+window_length, d_model, bias=False),  # (1024 + 480)-->480
+            nn.Linear(d_model+window_length, d_model, bias=False),  # (1024 + 480)-->1024
             nn.BatchNorm1d(d_model),
             nn.ReLU(),
-            nn.Linear(d_model, window_length),
+            nn.Linear(d_model, window_length),     # 1024-->480        
         )
 
-        # 将rgb和flow特征降维到512，拼接后为1024，防止过拟合
-        self.rgb_emb = nn.Linear(2048, d_model // 2)
-        self.flow_emb = nn.Linear(1024, d_model // 2)
+        
+        self.rgb_emb = nn.Linear(2048, d_model // 2)   # 2048-->512
+        self.flow_emb = nn.Linear(1024, d_model // 2)  # 1024-->512
         self.emb_out = nn.Sequential(
             # nn.BatchNorm1d(h_dim),
             DropoutTime1D(in_emb_dropout),
