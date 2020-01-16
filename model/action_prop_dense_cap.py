@@ -154,7 +154,7 @@ class ActionPropDenseCap(nn.Module):
         # 这一步对输入的图片进行编码，vis_feat为编码器最后一层的输出结果，all_emb为所有层的输出
         # vis_feat : (5,480,1024)
         # all_emb : [(5,480,1024),(5,480,1024)]
-        vis_feat, all_emb = self.vis_emb(x)  # 对输入图片特征编码，只是单纯的为了获取window_mask
+        vis_feat, all_emb = self.vis_emb(x)  # 对输入图片特征编码
         # vis_feat = self.vis_dropout(vis_feat)
 
        
