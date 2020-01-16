@@ -81,7 +81,7 @@ class LayerNorm(nn.Module):
         std = x.std(-1, keepdim=True)
         return self.gamma * (x - mean) / (std + self.eps) + self.beta
 
-# layernorm(residual)     
+# 残差结构有什么好处呢？显而易见：因为增加了一项x，那么该层网络对x求偏导的时候，多了一个常数项1！所以在反向传播过程中，梯度连乘，也不会造成梯度消失！
 class ResidualBlock(nn.Module):
 
     def __init__(self, layer, d_model, drop_ratio):
@@ -99,20 +99,24 @@ class Attention(nn.Module):
         super().__init__()
         self.scale = math.sqrt(d_key)  #32
         self.dropout = nn.Dropout(drop_ratio)
-        self.causal = causal
+        self.causal = causal   # 有因果关系的
 
-    def forward(self, query, key, value):  # (5,480,128) 
-        # 在测试推理时query : (91,128), key: (91,t+1,128),因此需要重写matmul
-        dot_products = matmul(query, key.transpose(1, 2))  # (5,480,128) x (5,128,480) = (5,480,480) / (5,19,128)x(5,128,19)=(5,19,19)
+    def forward(self, query, key, value):  # (B,T,C) 
+        # 计算Q,K的点积
+        dot_products = matmul(query, key.transpose(1, 2))  # (B,T,C)X(B,C,T) = (B,T,T) 
       
-        # 为什么在计算单词间的attention时需要创建上三角矩阵
         if query.dim() == 3 and (self is None or self.causal):
             tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵  (19,19)
             if key.is_cuda:
                 tri = tri.cuda(key.get_device())
             dot_products.data.sub_(tri.unsqueeze(0))    # sub_ 取负？？
+        # 为什么需要加上这个缩放因子呢？论文里给出了解释：对于d_k很大的时候，点积得到的结果维度很大，使得结果处于softmax函数梯度很小的区域。
         
-        return matmul(self.dropout(F.softmax(dot_products / self.scale, dim=-1)), value) # (5,480,480)x(5,480,128)=(5,480,128) / (5,19,128)
+        # softmax分数决定了每个单词对编码当下位置（“Thinking”）的贡献。显然，已经在这个位置上的单词将获得
+        # 最高的softmax分数，但有时关注另一个与当前单词相关的单词也会有帮助。第五步是将每个值向量乘以softmax分数(这是为了准备之后将它们求和)。
+        # 这里的直觉是希望关注语义上相关的单词，并弱化不相关的单词(例如，让它们乘以0.001这样的小数)。
+        return matmul(self.dropout(F.softmax(dot_products / self.scale, dim=-1)), value) # (B,T,T)x(B,T,C) = (B,T,C)
+       
 
 class MultiHead(nn.Module):
     # d_key = d_value = 1024
@@ -121,8 +125,8 @@ class MultiHead(nn.Module):
         self.attention = Attention(d_key, drop_ratio, causal=causal)
       
         # q,k,v matrix
-        self.wq = nn.Linear(d_key, d_key, bias=False)   # 1024-->1024
-        self.wk = nn.Linear(d_key, d_key, bias=False)   # 1024-->1024
+        self.wq = nn.Linear(d_key, d_key, bias=False)      # 1024-->1024
+        self.wk = nn.Linear(d_key, d_key, bias=False)      # 1024-->1024
         self.wv = nn.Linear(d_value, d_value, bias=False)  # 1024-->1024
         
         # concat matrix
@@ -130,14 +134,16 @@ class MultiHead(nn.Module):
         self.n_heads = n_heads  # 8
 
     def forward(self, query, key, value):
-        query, key, value = self.wq(query), self.wk(key), self.wv(value)  # (5,480,1024)
+        # 创建 Q,K,V矩阵
+        query, key, value = self.wq(query), self.wk(key), self.wv(value)  # (B,T,C)
       
-        # split q,k,v (5,480,1024)-->(5,480,128)x8
+        # split q,k,v (B,T,C)-->(B,T,C/8)
         query, key, value = (
             x.chunk(self.n_heads, -1) for x in (query, key, value))
         
+        # (B,T,C/8)-->(B,T,C)
         return self.wo(torch.cat([self.attention(q, k, v)
-                          for q, k, v in zip(query, key, value)], -1))  # (5,480,128) x 8(heads)-->(5,480,1024) / (5,19,1024)
+                          for q, k, v in zip(query, key, value)], -1)) 
 
 # 如果不用激活函数，每一层输出都是上层输入的线性函数，无论神经网络有多少层，输出都是输入的线性组合。
 class FeedForward(nn.Module):
@@ -154,12 +160,13 @@ class EncoderLayer(nn.Module):
 
     def __init__(self, d_model, d_hidden, n_heads, drop_ratio):
         super().__init__()
-        # 每个编码层包含一个self_attention和feedforward模块，其中每个模块用残差连接
+        #  MultiHead
+        #  feedforward 
         self.selfattn = ResidualBlock(
             MultiHead(d_model, d_model, n_heads, drop_ratio),
             d_model, drop_ratio)
         self.feedforward = ResidualBlock(FeedForward(d_model, d_hidden),
-                                         d_model, drop_ratio)
+                                         d_model, drop_ratio)  # 1024-->2048-->1024
 
     def forward(self, x):
         return self.feedforward(self.selfattn(x, x, x))
