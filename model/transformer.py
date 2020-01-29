@@ -110,19 +110,20 @@ class Attention(nn.Module):
 
     def __init__(self, d_key, drop_ratio, causal):
         super().__init__()
-        self.scale = math.sqrt(d_key)  #32
+        self.scale = math.sqrt(d_key)  # 32
         self.dropout = nn.Dropout(drop_ratio)
-        self.causal = causal   # 有因果关系的
+        self.causal = causal   
 
     def forward(self, query, key, value):  # (B,T,C) 
         # 计算Q,K的点积
-        dot_products = matmul(query, key.transpose(1, 2))  # (B,T,C)X(B,C,T) = (B,T,T) 
+        dot_products = matmul(query, key.transpose(1, 2))  # (B,T,C) X (B,C,T) = (B,T,T) 
       
         if query.dim() == 3 and (self is None or self.causal):
             tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵  (19,19)
             if key.is_cuda:
                 tri = tri.cuda(key.get_device())
             dot_products.data.sub_(tri.unsqueeze(0))    # sub_ 取负？？
+            
         # 为什么需要加上这个缩放因子呢？论文里给出了解释：对于d_k很大的时候，点积得到的结果维度很大，使得结果处于softmax函数梯度很小的区域。
         
         # softmax分数决定了每个单词对编码当下位置（“Thinking”）的贡献。显然，已经在这个位置上的单词将获得
@@ -131,9 +132,8 @@ class Attention(nn.Module):
         return matmul(self.dropout(F.softmax(dot_products / self.scale, dim=-1)), value) # (B,T,T)x(B,T,C) = (B,T,C)
        
 
-class MultiHead(nn.Module):
-    # d_key = d_value = 1024
-    def __init__(self, d_key, d_value, n_heads, drop_ratio, causal=False):
+class MultiHead(nn.Module): 
+    def __init__(self, d_key, d_value, n_heads, drop_ratio, causal=False):  # d_key = d_value = 1024
         super().__init__()
         self.attention = Attention(d_key, drop_ratio, causal=causal)
       
@@ -150,9 +150,8 @@ class MultiHead(nn.Module):
         # 创建 Q,K,V矩阵
         query, key, value = self.wq(query), self.wk(key), self.wv(value)  # (B,T,C)
       
-        # split q,k,v (B,T,C)-->(B,T,C/8)
-        query, key, value = (
-            x.chunk(self.n_heads, -1) for x in (query, key, value))
+        # split Q,K,V
+        query, key, value = (x.chunk(self.n_heads, -1) for x in (query, key, value))
         
         # (B,T,C/8)-->(B,T,C)
         return self.wo(torch.cat([self.attention(q, k, v)
@@ -189,19 +188,19 @@ class DecoderLayer(nn.Module):
     def __init__(self, d_model, d_hidden, n_heads, drop_ratio):
         super().__init__()
        
-        # 注意selfaten和attention的区别,解码层需要两层attention层
+        # 计算句子注意力
         self.selfattn = ResidualBlock(
             MultiHead(d_model, d_model, n_heads, drop_ratio, causal=True),   # causal = True 创建一个上三角矩阵,causal : 有因果关系的
-            d_model, drop_ratio)    # 对单词进行attention
+            d_model, drop_ratio)
+        # 计算句子与视觉特征注意力
         self.attention = ResidualBlock(
             MultiHead(d_model, d_model, n_heads, drop_ratio),   
-            d_model, drop_ratio)    # 对编码后的单词特征和视频特征进行编码,即让编解码器之间交互信息
+            d_model, drop_ratio)   
         self.feedforward = ResidualBlock(FeedForward(d_model, d_hidden),
                                          d_model, drop_ratio)
 
     def forward(self, x, encoding):  # x:(5,19,1024)  encoding: (5,480,1024)
-        # 先计算单词与单词间的attention再计算单词与提议特征间的attention
-        x = self.selfattn(x, x, x)  # word self_atten  (5,19,1024)
+        x = self.selfattn(x, x, x)  
         return self.feedforward(self.attention(x, encoding, encoding))  # cross module atten  (5,19,1024)
 
 class Encoder(nn.Module):
@@ -237,23 +236,23 @@ class Decoder(nn.Module):
         self.layers = nn.ModuleList(
             [DecoderLayer(d_model, d_hidden, n_heads, drop_ratio)
              for i in range(n_layers)])
-        self.out = nn.Linear(d_model, len(vocab))   # 1024-->24
+        self.out = nn.Linear(d_model, len(vocab))   
         self.dropout = nn.Dropout(drop_ratio)
         self.d_model = d_model
-        self.vocab = vocab   # 词典对象
+        self.vocab = vocab   
         self.d_out = len(vocab)
-
-    def forward(self, x, encoding):  # x : sent(5,19)  encoding : 编码的提议特征[(5,480,1024)/(5,480,1024)]
-        x = F.embedding(x, self.out.weight * math.sqrt(self.d_model))  # 词嵌入矩阵 # (5,19)-->(5,19,1024)
+        
+    # x : sent(5,19)  encoding :[(5,480,1024)/(5,480,1024)]
+    def forward(self, x, encoding):  
+        x = F.embedding(x, self.out.weight * math.sqrt(self.d_model))  # (5,19)-->(5,19,1024)
         x = x+positional_encodings_like(x)
         x = self.dropout(x)
-        # layers = 2 
-        # encoding = [(5,480,1024),(5,480,1024)]
+      
         for layer, enc in zip(self.layers, encoding):
             x = layer(x, enc)
         return x      # (5,19,1024)
 
-    #---------------------------------------------用于测试时生成单词----------------------------------------#
+   
     def greedy(self, encoding, T):   #encoding: [(91,480,1024),(91,480,1024)]  T=20
         B, _, H = encoding[0].size()  # (91,480,1024)
         # change T to 20, max # of words in a sentence
@@ -382,7 +381,6 @@ class Transformer(nn.Module):
 
 
 class RealTransformer(nn.Module):
-    # vocab_trg ： 词典对象
     def __init__(self, d_model, encoder, vocab_trg, d_hidden=2048,
                  n_layers=6, n_heads=8, drop_ratio=0.1):
         super().__init__()
@@ -392,15 +390,15 @@ class RealTransformer(nn.Module):
         self.decoder = Decoder(d_model, d_hidden, vocab_trg, n_layers,
                               n_heads, drop_ratio)
         self.n_layers = n_layers
-        self.tokenizer = PTBTokenizer()  # 分词器
+        self.tokenizer = PTBTokenizer()
 
-    #--------------------------------------------将单词idx索引转为单词--------------------------------------#
     def denum(self, data):   # data : (20)
         return ' '.join(self.decoder.vocab.itos[i] for i in data).replace(
             ' <eos>', '').replace(' <pad>', '').replace(' .', '').replace('  ', '')
  
-    def forward(self, x, s, x_mask=None, sample_prob=0):  # x:(5,480,1024) s:(5,20) x_mask:(5,480,1)
-        encoding = self.encoder(x, x_mask)  # [(5,480,1024)/(5,480,1024)]提议特征编码
+    # x:(5,480,1024)  s:(5,20)  x_mask:(5,480,1)
+    def forward(self, x, s, x_mask=None, sample_prob=0):  
+        encoding = self.encoder(x, x_mask)  # [(5,480,1024),(5,480,1024)]
        
         max_sent_len = 20
         if not self.training:
@@ -414,10 +412,10 @@ class RealTransformer(nn.Module):
             logits = self.decoder.out(h)
         else:
             if sample_prob == 0:
-                # 对单词和编码后的视觉特征进一步编码
-                h = self.decoder(s[:, :-1].contiguous(), encoding)   # (5,19)/(5,480,1024)-->(5,19,1024)
-                targets, h = mask(s[:, 1:].contiguous(), h)   # targets:(63) h:(63,1024) 
-                logits = self.decoder.out(h) # (63,24)  获取每个单词属于字典中某个单词的概率
+                h = self.decoder(s[:, :-1].contiguous(), encoding)   # (5,19),[(5,480,1024),(5,480,1024)]-->(5,19,1024)
+                # 使用mask屏蔽语句中pad,获取对应的特征
+                targets, h = mask(s[:, 1:].contiguous(), h)   # targets:(63)   h:(63,1024) 
+                logits = self.decoder.out(h) 
             else:
                 model_pred = self.decoder.sampling(encoding, s,
                                                    s.size(1) - 2,
