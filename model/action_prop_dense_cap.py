@@ -356,7 +356,7 @@ class ActionPropDenseCap(nn.Module):
 
         x = self.emb_out(x)
 
-        #-------------------------------------------生成window_mask------------------------------------------#
+        
         vis_feat, all_emb = self.vis_emb(x)
         # vis_feat = self.vis_dropout(vis_feat)
 
@@ -388,17 +388,17 @@ class ActionPropDenseCap(nn.Module):
                     self.kernel_list[i]))
                 break
 
-        # (pred_score,overlap_score,len_off,cen_off,anc_len,anc_cen)
+        # (pos_score,overlap_score,len_off,cen_off,anc_len,anc_cen)
         prop_all = torch.cat(prop_lst, 2)  # (1,6,6338)
 
         # assume 1st and 2nd are action prediction and overlap, respectively
         prop_all[:,:2,:] = F.sigmoid(prop_all[:,:2,:])
 
 
-        pred_len = prop_all[:, 4, :] * torch.exp(prop_all[:, 2, :])   # (1,6338)
+        pred_len = prop_all[:, 4, :] * torch.exp(prop_all[:, 2, :])           # (1,6338)
         pred_cen = prop_all[:, 5, :] + prop_all[:, 4, :] * prop_all[:, 3, :]  # (1,6338)
 
-        nms_thresh_set = np.arange(0.9, 0.95, 0.05).tolist() # [0.9]
+        nms_thresh_set = np.arange(0.9, 0.95, 0.05).tolist()   # [0.9]
         all_proposal_results = []
 
         # store positional encodings, size of B x 4,
@@ -414,7 +414,7 @@ class ActionPropDenseCap(nn.Module):
         gate_scores = [] #Variable(torch.zeros(B, 1).type(dtype))
 
         for b in range(B):
-            crt_pred = prop_all.data[b]   # (6,6338)
+            crt_pred = prop_all.data[b]    # (6,6338)
             crt_pred_cen = pred_cen.data[b]  # (6338)
             crt_pred_len = pred_len.data[b]  # (6338)
             pred_masks = []
@@ -425,10 +425,12 @@ class ActionPropDenseCap(nn.Module):
             nproposal = torch.sum(torch.gt(prop_all.data[b, 0, :], pos_thresh))
             nproposal = min(max(nproposal, min_prop_num_before_nms),
                             prop_all.size(-1))
-            pred_results = np.empty((nproposal, 3))    # (200,3)
             
             
-            _, sel_idx = torch.topk(crt_pred[0], nproposal)  # 选取topk个提议，sel_idx 为对应提议的索引
+            pred_results = np.empty((nproposal, 3))    # 3 : (win_start,win_end,pos_score)
+            
+            
+            _, sel_idx = torch.topk(crt_pred[0], nproposal)  # 从6338个anchor中选取topk，sel_idx 为对应提议的索引
  
             start_t = time.time()
             for nms_thresh in nms_thresh_set:
@@ -460,21 +462,21 @@ class ActionPropDenseCap(nn.Module):
                         #     ))
                         #     continue
 
-                        pred_bin_window_mask[:, win_start:win_end] = 1
+                        pred_bin_window_mask[:, win_start:win_end] = 1   # 预测的离散mask
                         pred_masks.append(pred_bin_window_mask)
 
                         if self.learn_mask:
                             # 4, 5 are the indices for anchor length and center
-                            anc_len = crt_pred[4, sel_idx[prop_idx]]   # crt_pred : (6,6338)
+                            anc_len = crt_pred[4, sel_idx[prop_idx]]   
                             anc_cen = crt_pred[5, sel_idx[prop_idx]]
-                            # only use the pos sample to train, could potentially use more sample for training mask, but this is easier to do
+                            # only use the pos sample to train, could potentially use more sample for training mask, 
+                            # but this is easier to do
                             amask = torch.zeros(1,T).type(dtype)
                             amask[0,
                             max(0, math.floor(anc_cen - anc_len / 2.)):
                             min(T, math.ceil(anc_cen + anc_len / 2.))] = 1.
                             anchor_window_mask.append(amask)
-
-                            #----------------将预测的anchor的起始和结束时间及参考真实anchor的起止时间添加到列表中----------#
+                            
                             pred_start_lst.append(torch.Tensor([pred_start_w]).type(dtype))
                             pred_end_lst.append(torch.Tensor([pred_end_w]).type(dtype))
                             anchor_start_lst.append(torch.Tensor([max(0,
@@ -507,20 +509,20 @@ class ActionPropDenseCap(nn.Module):
                 pred_results[0] = np.array([0, min(original_frame_len, T), pos_thresh])
                 crt_nproposal = 1
 
-            pred_masks = Variable(torch.cat(pred_masks, 0))  # 91个满足条件的提议 (91,480)
+            pred_masks = Variable(torch.cat(pred_masks, 0))  #(91,480)
             
             #将输入特征拓展到和提议数相同
             batch_x = x[b].unsqueeze(0).expand(pred_masks.size(0), x.size(1), x.size(2))  # (1,480,1024)-->(91,480,1024)
 
             if self.learn_mask:
-                pe_pred_start = torch.cat(pred_start_lst, 0)  # （91）
-                pe_pred_end = torch.cat(pred_end_lst, 0)  # (91)
+                pe_pred_start = torch.cat(pred_start_lst, 0)     # (91)
+                pe_pred_end = torch.cat(pred_end_lst, 0)         # (91)
                 pe_anchor_start = torch.cat(anchor_start_lst, 0) # (91)
-                pe_anchor_end = torch.cat(anchor_end_lst, 0)  # (91)
+                pe_anchor_end = torch.cat(anchor_end_lst, 0)     # (91)
 
                 # 对位置进行编码
                 pe_locs = torch.cat((pe_pred_start, pe_pred_end, pe_anchor_start, pe_anchor_end), 0)  # (364)
-                pos_encs = positional_encodings(pe_locs, self.d_model // 4)  # (364,256)
+                pos_encs = positional_encodings(pe_locs, self.d_model // 4)     # (364,256)
                 npos = pos_encs.size(0)
                 anchor_window_mask = Variable(torch.cat(anchor_window_mask, 0)) # (91,480)
                 
@@ -532,8 +534,7 @@ class ActionPropDenseCap(nn.Module):
 
                 if gated_mask:
                     gate_scores = Variable(torch.cat(gate_scores, 0).view(-1,1,1))
-                    window_mask = (gate_scores * pred_masks
-                                   + (1 - gate_scores) * pred_cont_masks)  # (91,480,1)
+                    window_mask = (gate_scores * pred_masks+ (1 - gate_scores) * pred_cont_masks)  # (91,480,1)
 
                 else:
                     window_mask = pred_cont_masks
@@ -542,30 +543,27 @@ class ActionPropDenseCap(nn.Module):
 
             mid2_t = time.time()
 
-            #------------------------------------生成caption------------------------------------#
             
             pred_sentence = []
             # use cap_batch as caption batch size
-            cap_batch = math.ceil(480*256/T)  # 256
+            cap_batch = math.ceil(480*256/T)  # 256 不明白为什么这么写？？
             
             for sent_i in range(math.ceil(window_mask.size(0)/cap_batch)):
                 batch_start = sent_i*cap_batch  # 0
-                batch_end = min((sent_i+1)*cap_batch, window_mask.size(0))  # 91
+                batch_end = min((sent_i+1)*cap_batch, window_mask.size(0))  # 91  不明白为什么这么写？？
                
-                # batch_x : (91,480,1024)
+                # batch_x :     (91,480,1024)
                 # window_mask : (91,480,1)
                 pred_sentence += self.cap_model.greedy(batch_x[batch_start:batch_end],
-                                                       window_mask[batch_start:batch_end], 20)
+                                                       window_mask[batch_start:batch_end], 20)  # (91,20)
 
-            pred_results = pred_results[:crt_nproposal]   # crt_nproposals = 91
-            assert len(pred_sentence) == crt_nproposal, (
-                "number of predicted sentence and proposal does not match"
-            )
+            pred_results = pred_results[:crt_nproposal]   
+            assert len(pred_sentence) == crt_nproposal, ("number of predicted sentence and proposal does not match")
 
             for idx in range(len(pred_results)):
                 batch_result.append((pred_results[idx][0],  # pred_start
                                      pred_results[idx][1],  # pred_end
-                                     pred_results[idx][2],  # pred_score
+                                     pred_results[idx][2],  # pred_pos_score
                                      pred_sentence[idx]))   # pred_sent
             all_proposal_results.append(tuple(batch_result))
 
