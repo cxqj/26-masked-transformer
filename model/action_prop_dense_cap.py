@@ -190,6 +190,9 @@ class ActionPropDenseCap(nn.Module):
                 break
 
         # Important! In prop_all, for the first dimension, the four values are proposal score, overlapping score (DEPRECATED!), length offset, and center offset, respectively
+        """
+        proposal_score,overlap_score,len_off,cen_off,anchor_l,anchor_c
+        """
         prop_all = torch.cat(prop_lst, 2)  # (5,6,6338) 对于18种kernel_list共生成6338个anchors
 
         if B != s_pos.size(0) or B != s_neg.size(0):
@@ -201,7 +204,7 @@ class ActionPropDenseCap(nn.Module):
         pred_offsets = Variable(torch.FloatTensor(np.zeros((sample_each*B,2))).type(dtype)) # (50,2)
         gt_offsets = Variable(torch.FloatTensor(np.zeros((sample_each*B,2))).type(dtype)) # (50,2)
 
-        #---------------------------------------------生成learn mask-----------------------------------------#
+        
         # B x T x 1
         batch_mask = Variable(torch.FloatTensor(np.zeros((B,T,1))).type(dtype))  # (5,480,1)
 
@@ -221,7 +224,7 @@ class ActionPropDenseCap(nn.Module):
         mask_loss = None
 
         # prop_all : (fg_score, overlap_score, len_off, cen_off, anchor_l, anchor_c)     
-        pred_len = prop_all[:, 4, :] * torch.exp(prop_all[:, 2, :])
+        pred_len = prop_all[:, 4, :] * torch.exp(prop_all[:, 2, :])  
         pred_cen = prop_all[:, 5, :] + prop_all[:, 4, :] * prop_all[:, 3, :]
 
         for b in range(B):
@@ -241,7 +244,7 @@ class ActionPropDenseCap(nn.Module):
                 pos_sam = pos_anchor[i].data   # (anchor_idx,overlap,len_off,cen_off)
                 pos_sam_ind = int(pos_sam[0])  # 对应的哪一个预设的anchor
 
-                pred_score[b*sample_each+i, 0] = prop_all[b, 0, pos_sam_ind]  # prop_all : (5,6,6338)
+                pred_score[b*sample_each+i, 0] = prop_all[b, 0, pos_sam_ind]  
                 gt_score[b*sample_each+i, 0] = 1
 
                 pred_offsets[b*sample_each+i] = prop_all[b, 2:4, pos_sam_ind]
@@ -271,6 +274,8 @@ class ActionPropDenseCap(nn.Module):
                     #----------------------gt_window_mask------------------------#
                     gt_len = np.exp(pos_sam[2].item()) * anc_len
                     gt_cen = pos_sam[3].item() * anc_len + anc_cen
+                    
+                    
                     gt_window_mask = torch.zeros(T, 1).type(dtype)  # (480,1)
                     gt_window_mask[
                     max(0, math.floor(gt_cen - gt_len / 2.)):
