@@ -111,7 +111,7 @@ def get_dataset(args):
 
 
 def get_model(text_proc, args):
-    sent_vocab = text_proc.vocab  # 字典对象
+    sent_vocab = text_proc.vocab  
     model = ActionPropDenseCap(d_model=args.d_model,
                                d_hidden=args.d_hidden,
                                n_layers=args.n_layers,
@@ -142,6 +142,7 @@ def get_model(text_proc, args):
 ### Validation ##
 def validate(model, loader, args):
     model.eval()
+  
     densecap_result = defaultdict(list)  
     prop_result = defaultdict(list)  
 
@@ -163,7 +164,7 @@ def validate(model, loader, args):
             raise NotImplementedError
 
     for data in loader:
-        image_feat, original_num_frame, video_prefix = data  # (1,480,3072) , 369
+        image_feat, original_num_frame, video_prefix = data  # (1,480,3072)
         with torch.no_grad():
             image_feat = Variable(image_feat)  # (1,480,3072)
             # ship data to gpu
@@ -176,7 +177,7 @@ def validate(model, loader, args):
                 print("cannot find frame_to_second for video {}".format(video_prefix[0].split('/')[-1]))
             sampling_sec = frame_to_second[video_prefix[0].split('/')[-1]] # batch_size has to be 1
             
-            # 测试时调用inference
+            # (start,end,pos_score,sentence)
             all_proposal_results = model.inference(image_feat,
                                                    original_num_frame,
                                                    sampling_sec,
