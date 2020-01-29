@@ -259,7 +259,7 @@ def main(args):
     train_loader, valid_loader, text_proc, train_sampler = get_dataset(args)
 
     print('building model')
-    model = get_model(text_proc, args)   # text_proc 是文本处理对象
+    model = get_model(text_proc, args)   
 
     # filter params that don't require gradient (credit: PyTorch Forum issue 679)
     # smaller learning rate for the decoder
@@ -298,14 +298,13 @@ def main(args):
     else:
         vis, vis_window = None, None
 
-    # 验证loss保存结果时看的是
+   
     all_eval_losses = [] 
     all_cls_losses = []
     all_reg_losses = []
     all_sent_losses = []
     all_mask_losses = []
     
-    # 训练loss
     all_training_losses = []  
     for train_epoch in range(args.max_epochs):
         t_epoch_start = time.time()
@@ -372,7 +371,7 @@ def main(args):
                                       'dev_sentence',
                                       'dev_mask']))
 
-        # 若验证Loss小于最优loss则保存模型
+       
         if valid_loss < best_loss:
             best_loss = valid_loss
             if (args.distributed and dist.get_rank() == 0) or not args.distributed:
@@ -427,10 +426,10 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
     
     for train_iter, data in enumerate(train_loader):
         (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch) = data
-        img_batch = Variable(img_batch)         # (5,480,3072)
-        tempo_seg_pos = Variable(tempo_seg_pos) # (5,10,4)
-        tempo_seg_neg = Variable(tempo_seg_neg) # (5,10,2)
-        sentence_batch = Variable(sentence_batch) # (5,20)
+        img_batch = Variable(img_batch)            # (5,480,3072)
+        tempo_seg_pos = Variable(tempo_seg_pos)    # (5,10,4)
+        tempo_seg_neg = Variable(tempo_seg_neg)    # (5,10,2)
+        sentence_batch = Variable(sentence_batch)  # (5,20)
 
         if args.cuda:
             img_batch = img_batch.cuda()
@@ -455,7 +454,7 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
         total_loss = cls_loss + reg_loss + sent_loss
 
         if scst_loss is not None:
-            scst_loss *= args.scst_weight  # 0.0
+            scst_loss *= args.scst_weight  
             total_loss += scst_loss
 
         if mask_loss is not None:
@@ -464,16 +463,10 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
         else:
             mask_loss = cls_loss.new(1).fill_(0)
 
-        # 首先将梯度置为0再进行loss反传
         optimizer.zero_grad()   
         total_loss.backward()
 
         # enable the clipping for zero mask loss training
-        """
-        filter() 函数用于过滤序列，过滤掉不符合条件的元素，返回由符合条件元素组成的新列表。
-        filter(function, iterable)  function -- 判断函数。 iterable -- 可迭代对象
-    
-        """
         total_grad_norm = clip_grad_norm_(filter(lambda p: p.requires_grad, model.parameters()),
                                          args.grad_norm)
 
@@ -533,9 +526,9 @@ def valid(model, loader):
     val_sent_loss = []
     val_mask_loss = []
     # 每个data包含以下信息 ： 
-    #    图片特征：(B,480,3072)
-    #    fg ： (B,10,4)
-    #    bg :  (B,10,2)
+    #    img_feat：(B,480,3072)
+    #    pos_sample ： (B,10,4)
+    #    neg_sample :  (B,10,2)
     #    sent: (B,20)
     for iter, data in enumerate(loader):
         (img_batch, tempo_seg_pos, tempo_seg_neg, sentence_batch) = data
