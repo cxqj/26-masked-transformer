@@ -195,7 +195,7 @@ class DecoderLayer(nn.Module):
             d_model, drop_ratio)    # 对单词进行attention
         self.attention = ResidualBlock(
             MultiHead(d_model, d_model, n_heads, drop_ratio),   
-            d_model, drop_ratio)    # 对编码后的单词特征和视频特征进行编码
+            d_model, drop_ratio)    # 对编码后的单词特征和视频特征进行编码,即让编解码器之间交互信息
         self.feedforward = ResidualBlock(FeedForward(d_model, d_hidden),
                                          d_model, drop_ratio)
 
@@ -400,9 +400,8 @@ class RealTransformer(nn.Module):
             ' <eos>', '').replace(' <pad>', '').replace(' .', '').replace('  ', '')
  
     def forward(self, x, s, x_mask=None, sample_prob=0):  # x:(5,480,1024) s:(5,20) x_mask:(5,480,1)
-        encoding = self.encoder(x, x_mask)  # [(5,480,1024)/(5,480,1024)]提议特征编码，x_maks就是预测生成的mask，其实可以认为它是对每个时间点的特征图赋予不同的权重
-        # 这里首先也是对输入的视频进行编码
-
+        encoding = self.encoder(x, x_mask)  # [(5,480,1024)/(5,480,1024)]提议特征编码
+       
         max_sent_len = 20
         if not self.training:
             if isinstance(s, list):
@@ -416,7 +415,7 @@ class RealTransformer(nn.Module):
         else:
             if sample_prob == 0:
                 # 对单词和编码后的视觉特征进一步编码
-                h = self.decoder(s[:, :-1].contiguous(), encoding)   # s:(5,19) e:(5,480,1024)-->(5,19,1024)
+                h = self.decoder(s[:, :-1].contiguous(), encoding)   # (5,19)/(5,480,1024)-->(5,19,1024)
                 targets, h = mask(s[:, 1:].contiguous(), h)   # targets:(63) h:(63,1024) 
                 logits = self.decoder.out(h) # (63,24)  获取每个单词属于字典中某个单词的概率
             else:
