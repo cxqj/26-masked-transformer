@@ -259,35 +259,31 @@ class Decoder(nn.Module):
         # T = 40
         # T *= 2
         # self.vocab.itos : [<unk>,<pad>,<init>,<eos>,'.','the',.......]
-        # self.vocab.stio : [<unk>:0,<pad>:1,<init>:2,<eos>:3,......]
-        prediction = Variable(encoding[0].data.new(B, T).long().fill_(
-            self.vocab.stoi['<pad>']))  # (91,20)
+        # self.vocab.stoi : [<unk>:0,<pad>:1,<init>:2,<eos>:3,......]
+        prediction = Variable(encoding[0].data.new(B, T).long().fill_(self.vocab.stoi['<pad>']))  # (91,20)
         
+        # [(91,20,1024),(91,20,1024),(91,20,1024)]
         hiddens = [Variable(encoding[0].data.new(B, T, H).zero_())
-                   for l in range(len(self.layers) + 1)]     # [(91,20,1024),(91,20,1024),(91,20,1024)]
-        embedW = self.out.weight * math.sqrt(self.d_model)  # (24,1024) 词嵌入 
+                   for l in range(len(self.layers) + 1)]     
+        embedW = self.out.weight * math.sqrt(self.d_model)  # (24,1024)*32 词嵌入矩阵 
         
-        # hiddens[0] 记录初始隐状态
-        """
-         Note that during decoding,the encoder performs the forward propagation again so thathe representation
-         of each encoder layer contains only theinformation for the current proposal
         
         """
-
+         Note that during decoding,the encoder performs the forward propagation again so that the representation
+         of each encoder layer contains only the information for the current proposal
+        """
+   
         hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])  # (91,20,1024)
-        
-
         for t in range(T):  
             if t == 0:
                 hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(Variable(
                     encoding[0].data.new(B).long().fill_(
-                        self.vocab.stoi['<init>'])), embedW)  # 初始隐藏状态+词嵌入
+                        self.vocab.stoi['<init>'])), embedW)  
             else:
-                hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(prediction[:, t - 1],     
-                                                                embedW)
+                hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(prediction[:, t - 1], embedW)  # 使用embedW对单词进行词嵌入
             hiddens[0][:, t] = self.dropout(hiddens[0][:, t])
             
-            for l in range(len(self.layers)):
+            for l in range(len(self.layers)):  # layers=2
                 """
                 Note that the self-attention layer in the decoder can only attend to the current and previous positions
                 to preserve the auto-regressive property.
@@ -300,9 +296,10 @@ class Decoder(nn.Module):
                 
                 # x : (91,1024)  encoding[l] : (91,480,1024)  encoding[l] : (91,480,1024)
                 hiddens[l + 1][:, t] = self.layers[l].feedforward(
-                    self.layers[l].attention(x, encoding[l], encoding[l]))  # 计算单词与提议特征的注意力
-
-            _, prediction[:, t] = self.out(hiddens[-1][:, t]).max(-1)  # (91,20,1024)---->(91,max(24))---->(91,20) 得到的每个单词最大概率对应字典中单词的索引
+                    self.layers[l].attention(x, encoding[l], encoding[l]))  
+                
+            # (91,1024)-->max(91,len(vocab))  得到的每个单词最大概率对应字典中单词的索引
+            _, prediction[:, t] = self.out(hiddens[-1][:, t]).max(-1)  
         return hiddens, prediction   # hiddens : [(91,20,1024),(91,20,1024),(91,20,1024)], prediction : (91,20)
 
 
@@ -392,7 +389,8 @@ class RealTransformer(nn.Module):
         self.n_layers = n_layers
         self.tokenizer = PTBTokenizer()
 
-    def denum(self, data):   # data : (20)
+    # 将索引转换为对应的单词并替换其中的特殊标记
+    def denum(self, data):  
         return ' '.join(self.decoder.vocab.itos[i] for i in data).replace(
             ' <eos>', '').replace(' <pad>', '').replace(' .', '').replace('  ', '')
  
@@ -432,19 +430,19 @@ class RealTransformer(nn.Module):
 
         return logits, targets  # (63,24) / (63)
 
-# ---------------------------------------------测试时预测句子----------------------------------------------#
-    #x:提议对应的特征 (91,480,1024)
-    #x_mask: 提议对应的窗口mask (91,480,1)
+
+    #x: (91,480,1024)
+    #x_mask: (91,480,1)
     #T：20
     def greedy(self, x, x_mask, T):
         encoding = self.encoder(x, x_mask)  # [(91,480,1024),(91,480,1024)]
 
-        _, pred = self.decoder.greedy(encoding, T) # T = 20
+        _, pred = self.decoder.greedy(encoding, T)  # (91,20)
        
         sent_lst = []
         for i in range(pred.data.size(0)):
             sent_lst.append(self.denum(pred.data[i]))
-        return sent_lst
+        return sent_lst   # (91,20)
   
   
   
