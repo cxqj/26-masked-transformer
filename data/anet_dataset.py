@@ -242,7 +242,8 @@ class ANetDataset(Dataset):
                                           anc_cen_all, pos_thresh, neg_thresh))
                             vid_idx += 1
                 results = results[:vid_idx]
-                
+		
+	
                """
                results: 
                   {vid: (ann_idx, j, overlap, len_offset, cen_offset,
@@ -253,6 +254,26 @@ class ANetDataset(Dataset):
                 
                 for i, r in enumerate(results):
                     results[i] = r.get()
+           #---------单进程--------#
+	   if True:
+                results = [None]*len(raw_data)
+                vid_idx = 0
+                tot_items = len(raw_data)
+                curr = 0
+                for vid, val in raw_data.items():
+                    annotations = val['annotations']
+                    print("At {}/{}".format(curr, tot_items))
+                    curr += 1
+                    for split_path in split_paths:
+                        if val['subset'] in split and os.path.isfile(os.path.join(split_path, vid + '_bn.npy')):
+                            results[vid_idx] = _get_pos_neg(
+                                         split_path, annotations, vid,
+                                          slide_window_size, frame_to_second[vid], anc_len_all,
+                                          anc_cen_all, pos_thresh, neg_thresh)
+                            vid_idx += 1
+                results = results[:vid_idx]
+                for i, r in enumerate(results):
+                    results[i] = r
 
             vid_counter = 0
             for r in results:  
