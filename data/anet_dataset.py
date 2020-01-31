@@ -354,6 +354,7 @@ def _get_pos_neg(split_path, annotations, vid,
         total_frame = bn_feat.size(0) 
 
        
+        # 不太明白为什么乘sampling_sec
         window_start = 0
         window_end = slide_window_size
         window_start_t = window_start * sampling_sec 
