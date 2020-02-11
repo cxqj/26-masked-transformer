@@ -420,7 +420,7 @@ def main(args):
 def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
     model.train() # training mode
     train_loss = []
-    nbatches = len(train_loader)  # batch_size
+    nbatches = len(train_loader)  # 总共可以分为多少个batch
     t_iter_start = time.time()
 
     sample_prob = min(args.sample_prob, int(epoch/5)*0.05)  #probability for use model samples during training
