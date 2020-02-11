@@ -372,6 +372,7 @@ def main(args):
                                       'dev_mask']))
 
        
+        # 保存当前的最佳模型
         if valid_loss < best_loss:
             best_loss = valid_loss
             if (args.distributed and dist.get_rank() == 0) or not args.distributed:
@@ -390,7 +391,7 @@ def main(args):
                         }, os.path.join(args.checkpoint_path, 'model_losses.t7'))
 
         # learning rate decay
-        scheduler.step(valid_loss)
+        scheduler.step(valid_loss)  # 检查验证loss是否要进行学习率下降
 
         # validation/save checkpoint every a few epochs
         if train_epoch%args.save_checkpoint_every == 0 or train_epoch == args.max_epochs:
