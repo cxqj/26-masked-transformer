@@ -188,7 +188,7 @@ class ANetDataset(Dataset):
 
             # ------------------------------计算取整后的视频时长对应帧数取整后所占原始时长的百分比---------------------------------------#
             frame_to_second = {}
-            sampling_sec = 0.5 # hard coded, only support 0.5
+            sampling_sec = 0.5 # hard coded, only support 0.5  是不是每个一帧抽样一次的意思
             with open(dur_file) as f:
                 if dataset == 'anet':
                     for line in f:
@@ -357,7 +357,7 @@ def _get_pos_neg(split_path, annotations, vid,
         # 不太明白为什么乘sampling_sec
         window_start = 0
         window_end = slide_window_size
-        window_start_t = window_start * sampling_sec 
+        window_start_t = window_start * sampling_sec   #为什么这里要乘sample_sec??
         window_end_t = window_end * sampling_sec
         
         
@@ -371,7 +371,7 @@ def _get_pos_neg(split_path, annotations, vid,
             for ann_idx, ann in enumerate(annotations):
                 seg = ann['segment']
                
-                gt_start = seg[0] / sampling_sec   # int/float = sampling_sec---> float = int / sampling_sec
+                gt_start = seg[0] / sampling_sec    #为什么这里要除以sample_sec??
                 gt_end = seg[1] / sampling_sec
                 if gt_start > gt_end:
                     gt_start, gt_end = gt_end, gt_start
