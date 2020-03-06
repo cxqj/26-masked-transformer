@@ -130,7 +130,7 @@ print(args)
 
 # arguments inspection
 assert(args.slide_window_size >= args.slide_window_stride)
-assert(args.sampling_sec == 0.5) # attention! sampling_sec is hard coded as 0.5
+assert(args.sampling_sec == 0.5) # attention! sampling_sec is hard coded as 0.5  提供的标注和原始没啥区别啊！！
 
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
