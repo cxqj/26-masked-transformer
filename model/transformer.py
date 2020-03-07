@@ -119,10 +119,10 @@ class Attention(nn.Module):
         dot_products = matmul(query, key.transpose(1, 2))  # (B,T,C) X (B,C,T) = (B,T,T) 
       
         if query.dim() == 3 and (self is None or self.causal):
-            tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵  (19,19)
+            tri = torch.ones(key.size(1), key.size(1)).triu(1) * INF    # 创建上三角矩阵  (19,19),上三角矩阵值为无穷大，对角线为0
             if key.is_cuda:
                 tri = tri.cuda(key.get_device())
-            dot_products.data.sub_(tri.unsqueeze(0))    # sub_ 取负？？
+            dot_products.data.sub_(tri.unsqueeze(0))    # 得到的dot_product-tri得到一个上三角为负无穷大，下三角为有效值的矩阵
             
         # 为什么需要加上这个缩放因子呢？论文里给出了解释：对于d_k很大的时候，点积得到的结果维度很大，使得结果处于softmax函数梯度很小的区域。
         
