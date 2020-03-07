@@ -196,9 +196,9 @@ class ActionPropDenseCap(nn.Module):
         sample_each = self.nsamples // 2    # 10
         
         # 定义变量保存结果
-        pred_score = Variable(torch.FloatTensor(np.zeros((sample_each*B, 2))).type(dtype))  
-        gt_score = Variable(torch.FloatTensor(np.zeros((sample_each*B, 2))).type(dtype)) 
-        pred_offsets = Variable(torch.FloatTensor(np.zeros((sample_each*B,2))).type(dtype)) 
+        pred_score = Variable(torch.FloatTensor(np.zeros((sample_each*B, 2))).type(dtype))  #fg_score, bg_score 
+        gt_score = Variable(torch.FloatTensor(np.zeros((sample_each*B, 2))).type(dtype))    
+        pred_offsets = Variable(torch.FloatTensor(np.zeros((sample_each*B,2))).type(dtype))  #len_off, cen_off
         gt_offsets = Variable(torch.FloatTensor(np.zeros((sample_each*B,2))).type(dtype)) 
 
         
