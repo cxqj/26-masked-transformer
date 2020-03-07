@@ -357,7 +357,7 @@ def _get_pos_neg(split_path, annotations, vid,
         # 不太明白为什么乘sampling_sec
         window_start = 0
         window_end = slide_window_size
-        window_start_t = window_start * sampling_sec   #为什么这里要乘sample_sec??
+        window_start_t = window_start * sampling_sec   #这里相当于把窗口缩小
         window_end_t = window_end * sampling_sec
         
         
@@ -397,6 +397,7 @@ def _get_pos_neg(split_path, annotations, vid,
                                  ann['sentence_idx']))
                             pos_collected[j] = True
 
+	    # 把获取的正样本存储到pos_seg中
             filled = False
             for item in potential_match:
                 if item[0] not in pos_seg:
