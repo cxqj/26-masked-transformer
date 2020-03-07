@@ -273,7 +273,8 @@ class Decoder(nn.Module):
          of each encoder layer contains only the information for the current proposal
         """
    
-        hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])  # (91,20,1024)
+        # hidden[0]层主要是为了赋予位置编码信息和词嵌入信息
+        hiddens[0] = hiddens[0] + positional_encodings_like(hiddens[0])  # (91,20,1024)  包含了位置编码信息
         for t in range(T):  
             if t == 0:
                 hiddens[0][:, t] = hiddens[0][:, t] + F.embedding(Variable(
@@ -297,7 +298,7 @@ class Decoder(nn.Module):
                 # x : (91,1024)  encoding[l] : (91,480,1024)  encoding[l] : (91,480,1024)
                 hiddens[l + 1][:, t] = self.layers[l].feedforward(
                     self.layers[l].attention(x, encoding[l], encoding[l]))  
-                
+                e
             # (91,1024)-->max(91,len(vocab))  得到的每个单词最大概率对应字典中单词的索引
             _, prediction[:, t] = self.out(hiddens[-1][:, t]).max(-1)  
         return hiddens, prediction   # hiddens : [(91,20,1024),(91,20,1024),(91,20,1024)], prediction : (91,20)
