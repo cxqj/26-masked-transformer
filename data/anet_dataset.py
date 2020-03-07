@@ -371,7 +371,7 @@ def _get_pos_neg(split_path, annotations, vid,
             for ann_idx, ann in enumerate(annotations):
                 seg = ann['segment']
                
-                gt_start = seg[0] / sampling_sec    #为什么这里要除以sample_sec??
+                gt_start = seg[0] / sampling_sec    #相当于把gt的范围进行放大，预设的anchor是根据抽样后的时间长度预设的只有这样才和未抽样前相对应
                 gt_end = seg[1] / sampling_sec
                 if gt_start > gt_end:
                     gt_start, gt_end = gt_end, gt_start
