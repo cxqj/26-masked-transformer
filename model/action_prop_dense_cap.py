@@ -445,7 +445,6 @@ class ActionPropDenseCap(nn.Module):
                     if pred_end >= original_frame_len or pred_start < 0:
                         continue
 
-                    
                     hasoverlap = False
                     if crt_nproposal > 0:  
                         if np.max(segment_iou(np.array([pred_start, pred_end]), pred_results[:crt_nproposal])) > nms_thresh:
