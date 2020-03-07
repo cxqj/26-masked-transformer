@@ -127,9 +127,9 @@ class ActionPropDenseCap(nn.Module):
                                          n_heads=n_heads,
                                          drop_ratio=cap_dropout)
 
-        self.bce_loss = nn.BCEWithLogitsLoss() # cls loss and mask loss
+        self.bce_loss = nn.BCEWithLogitsLoss() # # -1/n[ylnx + (1-y)ln(1-x)]
         self.reg_loss = nn.SmoothL1Loss() # reg loss
-        self.l2_loss = nn.MSELoss()  # cap loss
+        self.l2_loss = nn.MSELoss()  # (x-y)^2
 
     # x : (5,480,3072)
     # s_pos : (5,10,4)
